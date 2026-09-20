@@ -1,0 +1,36 @@
+{
+  "name": "solar-chat",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "start": "bun build/index.js",
+    "preview": "vite preview",
+    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "poc": "bun scripts/run-poc.ts",
+    "poc:gpt": "POC_GPT_ONLY=1 bun scripts/run-poc.ts",
+    "poc:gpt-multimodal": "POC_RETEST_GPT_MULTIMODAL=1 bun scripts/run-poc.ts",
+    "poc:refresh": "POC_REFRESH_REPORT=1 bun scripts/run-poc.ts",
+    "poc:repair": "POC_REPAIR=1 bun scripts/run-poc.ts",
+    "poc:retest-output": "POC_RETEST_OUTPUT=1 bun scripts/run-poc.ts"
+  },
+  "dependencies": {
+    "dompurify": "latest",
+    "echarts": "latest",
+    "gsap": "latest",
+    "lucide-svelte": "latest",
+    "marked": "latest"
+  },
+  "devDependencies": {
+    "@sveltejs/adapter-node": "latest",
+    "@sveltejs/kit": "latest",
+    "@sveltejs/vite-plugin-svelte": "latest",
+    "svelte": "latest",
+    "@types/node": "latest",
+    "svelte-check": "latest",
+    "typescript": "^5.9.3",
+    "vite": "latest"
+  }
+}
