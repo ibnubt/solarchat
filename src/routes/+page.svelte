@@ -43,7 +43,11 @@
   let throughput: number[] = $state([0, 0, 0, 0, 0, 0, 0, 0]);
   const selectedModel = $derived(models.find((item) => item.value === model) || models[0]);
 
-  const makeId = () => crypto.randomUUID();
+  // Fallback aman untuk crypto.randomUUID (tidak tersedia di HTTP/internal/non-secure context)
+  const makeId = () =>
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `id-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
   onMount(() => {
     sidebarCollapsed = localStorage.getItem('tokenku-sidebar-collapsed') === 'true';
