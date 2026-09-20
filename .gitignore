@@ -6,5 +6,6 @@ build
 !.env.example
 .DS_Store
 data/*.json
+!data/poc-report.json
 data/*.tmp
 data/uploads/
