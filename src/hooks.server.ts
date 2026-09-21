@@ -4,6 +4,15 @@ import { SESSION_COOKIE, verifySessionToken } from '$lib/server/auth';
 const publicPaths = ['/login', '/api/auth/login'];
 
 export const handle: Handle = async ({ event, resolve }) => {
+  // Paksa HTTPS: redirect semua request HTTP ke HTTPS
+  const proto = event.request.headers.get('x-forwarded-proto') || event.url.protocol.replace(':', '');
+  if (proto !== 'https') {
+    const url = new URL(event.request.url);
+    url.protocol = 'https:';
+    url.port = '';
+    throw redirect(308, url.toString());
+  }
+
   const pathname = event.url.pathname;
   const user = verifySessionToken(event.cookies.get(SESSION_COOKIE));
   event.locals.user = user;
