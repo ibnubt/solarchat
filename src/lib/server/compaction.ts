@@ -1,5 +1,6 @@
 import { env } from '$env/dynamic/private';
 import type { ConversationContext } from '$lib/server/history';
+import type { Upstream } from '$lib/server/providers';
 
 export type ContextMessage = {
   id: string;
@@ -41,7 +42,7 @@ function tailWithinBudget(messages: ContextMessage[], budget: number) {
 
 async function generateSummary(
   fetcher: typeof fetch,
-  model: string,
+  upstream: Upstream,
   previousSummary: string,
   newMessages: ContextMessage[]
 ) {
@@ -49,15 +50,16 @@ async function generateSummary(
     .map((message) => `[${message.role.toUpperCase()}]\n${message.content}`)
     .join('\n\n');
   const response = await fetcher(
-    env.TOKENKU_API_URL || 'https://api.tokenku.ai/v1/chat/completions',
+    upstream.url,
     {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${env.TOKENKU_API_KEY}`,
+        Authorization: `Bearer ${upstream.apiKey}`,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: env.TOKENKU_COMPACTION_MODEL || model,
+        ...upstream.summaryBody,
+        model: upstream.summaryModel,
         stream: false,
         max_tokens: numberFromEnv(env.COMPACTION_MAX_TOKENS, 2048),
         messages: [
@@ -89,13 +91,13 @@ async function generateSummary(
 
 export async function prepareConversationContext(options: {
   fetcher: typeof fetch;
-  model: string;
+  upstream: Upstream;
   messages: ContextMessage[];
   currentContext?: ConversationContext | null;
 }) {
   const trigger = numberFromEnv(env.CONTEXT_COMPACT_TRIGGER, 24_000);
   const keepRecent = Math.max(4, numberFromEnv(env.CONTEXT_KEEP_RECENT_MESSAGES, 16));
-  const { fetcher, model, messages, currentContext } = options;
+  const { fetcher, upstream, messages, currentContext } = options;
 
   const compactedIndex = currentContext
     ? messages.findIndex((message) => message.id === currentContext.compactedThroughId)
@@ -118,7 +120,7 @@ export async function prepareConversationContext(options: {
   }
 
   try {
-    const summary = await generateSummary(fetcher, model, existingSummary, messagesToSummarize);
+    const summary = await generateSummary(fetcher, upstream, existingSummary, messagesToSummarize);
     const recentMessages = messages.slice(summarizeEnd);
     const context: ConversationContext = {
       summary,

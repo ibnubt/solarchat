@@ -5,6 +5,8 @@
 
   type MermaidApi = typeof import('mermaid')['default'];
   let { source, streaming = false }: { source: string; streaming?: boolean } = $props();
+  // crypto.randomUUID tidak tersedia di konteks non-HTTPS; cukup penghitung untuk id elemen render.
+  let renderCount = 0;
 
   let loader: Promise<MermaidApi> | null = null;
   const loadMermaid = () =>
@@ -39,7 +41,7 @@
     (async () => {
       const mermaid = await loadMermaid();
       if (!(await mermaid.parse(text, { suppressErrors: true }))) throw new Error('Sintaks diagram tidak valid.');
-      const result = await mermaid.render(`mmd-${crypto.randomUUID()}`, text);
+      const result = await mermaid.render(`mmd-${Date.now().toString(36)}-${(renderCount += 1)}`, text);
       if (!cancelled) svg = result.svg;
     })().catch((reason) => {
       if (!cancelled) { svg = ''; error = (reason as Error).message || 'Diagram gagal dirender.'; }

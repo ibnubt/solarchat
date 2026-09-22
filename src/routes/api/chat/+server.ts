@@ -1,9 +1,10 @@
 import { env } from '$env/dynamic/private';
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { CHAT_MODEL_IDS, DEFAULT_CHAT_MODEL, MULTIMODAL_MODEL_IDS, type ChatAttachment } from '$lib/chat';
+import { CHAT_MODELS, DEFAULT_CHAT_MODEL, MULTIMODAL_MODEL_IDS, type ChatAttachment } from '$lib/chat';
 import { prepareConversationContext, type ContextMessage } from '$lib/server/compaction';
 import { getConversation, mergeMessages, updateConversationContext } from '$lib/server/history';
+import { resolveUpstream } from '$lib/server/providers';
 import { imageUploadDataUrl } from '$lib/server/uploads';
 
 type SafeMessage = ContextMessage & { attachments?: ChatAttachment[] };
@@ -102,14 +103,15 @@ function sanitizeMessages(messages: unknown[]): SafeMessage[] {
 }
 
 export const POST: RequestHandler = async ({ request, fetch }) => {
-  if (!env.TOKENKU_API_KEY) return json({ error: 'TOKENKU_API_KEY belum dikonfigurasi.' }, { status: 500 });
-
   const body = await request.json().catch(() => null);
   const model = typeof body?.model === 'string' ? body.model : env.TOKENKU_MODEL || DEFAULT_CHAT_MODEL;
   const conversationId = typeof body?.conversationId === 'string' ? body.conversationId.slice(0, 100) : '';
 
   if (!Array.isArray(body?.messages) || body.messages.length === 0) return json({ error: 'Pesan tidak valid.' }, { status: 400 });
-  if (!CHAT_MODEL_IDS.has(model)) return json({ error: 'Model tidak didukung.' }, { status: 400 });
+  const modelOption = CHAT_MODELS.find((option) => option.value === model);
+  if (!modelOption) return json({ error: 'Model tidak didukung.' }, { status: 400 });
+  const upstreamConfig = resolveUpstream(modelOption);
+  if ('error' in upstreamConfig) return json({ error: upstreamConfig.error }, { status: 500 });
 
   const clientMessages = sanitizeMessages(body.messages);
   if (clientMessages.length === 0) return json({ error: 'Pesan tidak valid.' }, { status: 400 });
@@ -129,7 +131,7 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
 
     const prepared = await prepareConversationContext({
       fetcher: fetch,
-      model,
+      upstream: upstreamConfig,
       messages: safeMessages,
       currentContext: storedConversation?.context || null
     });
@@ -141,10 +143,14 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
     const attachmentsByMessage = new Map(
       safeMessages.filter((message) => message.attachments?.length).map((message) => [message.id, message.attachments || []])
     );
+    // Sebagian template (mis. Qwen di vLLM) hanya menerima satu pesan system di awal,
+    // jadi panduan format dan ringkasan konteks digabung.
+    const systemContent = [RENDER_GUIDE, ...prepared.messages.filter((message) => message.role === 'system').map((message) => message.content)].join('\n\n');
     const upstreamMessages: Array<{ role: ContextMessage['role']; content: string | Array<Record<string, unknown>> }> = [
-      { role: 'system', content: RENDER_GUIDE }
+      { role: 'system', content: systemContent }
     ];
     for (const message of prepared.messages) {
+      if (message.role === 'system') continue;
       const attachments = attachmentsByMessage.get(message.id) || [];
       if (!attachments.length || message.role !== 'user') {
         upstreamMessages.push({ role: message.role, content: message.content });
@@ -160,16 +166,16 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
     }
 
     const requestUpstream = (messages: typeof upstreamMessages) => fetch(
-      env.TOKENKU_API_URL || 'https://api.tokenku.ai/v1/chat/completions',
+      upstreamConfig.url,
       {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${env.TOKENKU_API_KEY}`,
+          Authorization: `Bearer ${upstreamConfig.apiKey}`,
           'Content-Type': 'application/json',
           Accept: 'text/event-stream'
         },
         body: JSON.stringify({
-          model,
+          model: upstreamConfig.model,
           messages,
           max_tokens: maxTokens(),
           stream: true,
@@ -181,7 +187,7 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
 
     if (!upstream.ok || !upstream.body) {
       const detail = await upstream.text().catch(() => '');
-      return json({ error: detail || `Tokenku merespons dengan status ${upstream.status}.` }, { status: upstream.status || 502 });
+      return json({ error: detail || `${upstreamConfig.name} merespons dengan status ${upstream.status}.` }, { status: upstream.status || 502 });
     }
 
     const encoder = new TextEncoder();
@@ -234,6 +240,6 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
       }
     });
   } catch {
-    return json({ error: 'Tidak dapat terhubung ke Tokenku.' }, { status: 502 });
+    return json({ error: `Tidak dapat terhubung ke ${upstreamConfig.name}.` }, { status: 502 });
   }
 };

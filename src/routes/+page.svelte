@@ -406,7 +406,7 @@
               continue;
             }
             const delta = payload.choices?.[0]?.delta;
-            if (delta?.reasoning_content && !generated) thinkingLabel = 'Menalar jawaban';
+            if ((delta?.reasoning_content || delta?.reasoning) && !generated) thinkingLabel = 'Menalar jawaban';
             if (delta?.content) {
               if (!firstTokenMs) firstTokenMs = Math.round(performance.now() - startedAt);
               thinkingLabel = 'Menulis jawaban';
