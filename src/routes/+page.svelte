@@ -2,13 +2,21 @@
   import { goto, invalidateAll } from '$app/navigation';
   import { onMount, tick } from 'svelte';
   import { gsap } from 'gsap';
-  import { ArrowUp, BarChart3, Bot, Check, ChevronDown, CircleStop, Clock3, Copy, History, ImagePlus, LoaderCircle, LogOut, Menu, MessageSquareText, PanelLeftClose, PanelLeftOpen, Plus, Sparkles, Trash2, User, X, Zap } from 'lucide-svelte';
-  import { CHAT_MODELS, DEFAULT_CHAT_MODEL, type ChatAttachment, type ChatMessage } from '$lib/chat';
+  import { ArrowDown, ArrowUp, BarChart3, Bot, Check, ChevronDown, CircleStop, Clock3, Copy, History, ImagePlus, LoaderCircle, LogOut, Menu, MessageSquareText, PanelLeftClose, PanelLeftOpen, Plus, Sparkles, SquarePen, Trash2, User, X, Zap } from 'lucide-svelte';
+  import { CHAT_MODELS, DEFAULT_CHAT_MODEL, trimContinuationOverlap, type ChatAttachment, type ChatMessage } from '$lib/chat';
+  import ImageViewer from '$lib/ImageViewer.svelte';
   import Markdown from '$lib/Markdown.svelte';
   import ThroughputChart from '$lib/ThroughputChart.svelte';
+  import { openImage } from '$lib/viewer.svelte';
 
   type ContextState = { summary: string; compactedThroughId: string; summarizedMessages: number; estimatedTokensAfter: number; compactedAt: string };
-  type Conversation = { id: string; title: string; model: string; messages: ChatMessage[]; context?: ContextState; createdAt: string; updatedAt: string };
+  type ConversationSummary = { id: string; title: string; model: string; messageCount: number; createdAt: string; updatedAt: string };
+  type MessagePage = { conversation: ConversationSummary & { context?: ContextState }; messages: ChatMessage[]; hasMore: boolean };
+
+  const HISTORY_PAGE_SIZE = 30;
+  const MESSAGE_PAGE_SIZE = 30;
+  // Server menggabungkan riwayat tersimpan, jadi cukup kirim ekor percakapan yang sedang dimuat.
+  const CHAT_REQUEST_WINDOW = 40;
 
   const starters = [
     { title: 'Buat strategi produk', body: 'Susun strategi peluncuran produk SaaS B2B dalam 30 hari.' },
@@ -19,8 +27,20 @@
   const models = CHAT_MODELS;
 
   let messages: ChatMessage[] = $state([]);
-  let conversations: Conversation[] = $state([]);
+  let conversations: ConversationSummary[] = $state([]);
+  let historyTotal = $state(0);
+  let historyNextOffset: number | null = $state(null);
+  let historyLoadingMore = $state(false);
   let activeConversationId = $state('');
+  let loadingConversation = $state(false);
+  let conversationError = $state('');
+  let hasOlder = $state(false);
+  let loadingOlder = $state(false);
+  let pinnedToBottom = true;
+  let lastScrollTop = 0;
+  let showJump = $state(false);
+  let composerHeight = $state(0);
+  let openRequest = 0;
   let activeContext: ContextState | null = $state(null);
   let prompt = $state('');
   let model = $state(DEFAULT_CHAT_MODEL);
@@ -33,7 +53,8 @@
   let sidebarCollapsed = $state(false);
   let textarea: HTMLTextAreaElement;
   let imageInput: HTMLInputElement = $state()!;
-  let conversation: HTMLElement = $state()!;
+  let conversation: HTMLElement | undefined = $state();
+  let conversationInner: HTMLElement | undefined = $state();
   let abortController: AbortController | null = null;
   let startedAt = 0;
   let firstTokenMs = $state(0);
@@ -60,16 +81,28 @@
     return () => window.removeEventListener('keydown', shortcut);
   });
 
-  async function loadHistory() {
-    historyLoading = true;
+  async function loadHistory(more = false) {
+    if (more && (historyNextOffset === null || historyLoadingMore || historyLoading)) return;
+    if (more) historyLoadingMore = true;
+    else historyLoading = true;
     try {
-      const response = await fetch('/api/history');
+      const offset = more ? historyNextOffset : 0;
+      const response = await fetch(`/api/history?offset=${offset}&limit=${HISTORY_PAGE_SIZE}`);
       if (response.status === 401) return goto('/login');
       if (!response.ok) throw new Error('Gagal memuat riwayat.');
       const result = await response.json();
-      conversations = Array.isArray(result.conversations) ? result.conversations : [];
-    } catch { conversations = []; }
-    finally { historyLoading = false; }
+      const page: ConversationSummary[] = Array.isArray(result.conversations) ? result.conversations : [];
+      const known = new Set(more ? conversations.map((item) => item.id) : []);
+      conversations = more ? [...conversations, ...page.filter((item) => !known.has(item.id))] : page;
+      historyNextOffset = typeof result.nextOffset === 'number' ? result.nextOffset : null;
+      historyTotal = Number(result.total) || conversations.length;
+    } catch { if (!more) conversations = []; }
+    finally { historyLoading = false; historyLoadingMore = false; }
+  }
+
+  function handleHistoryScroll(event: Event) {
+    const list = event.currentTarget as HTMLElement;
+    if (list.scrollHeight - list.scrollTop - list.clientHeight < 120) void loadHistory(true);
   }
 
   function toggleSidebar() {
@@ -167,12 +200,74 @@
     if (!next.multimodal && pendingAttachment) void discardPendingAttachment();
   }
 
-  async function scrollToBottom(force = false) {
-    if (!conversation) return;
-    const distance = conversation.scrollHeight - conversation.scrollTop - conversation.clientHeight;
-    if (!force && distance > 160) return;
+  async function jumpToBottom(behavior: ScrollBehavior = 'auto') {
+    pinnedToBottom = true;
+    showJump = false;
     await tick();
-    requestAnimationFrame(() => { if (conversation) conversation.scrollTop = conversation.scrollHeight; });
+    if (!conversation) return;
+    // Animasi halus hanya untuk dua layar terakhir; jarak jauh dilompati dulu.
+    const nearBottom = conversation.scrollHeight - conversation.clientHeight * 2;
+    if (behavior === 'smooth' && conversation.scrollTop < nearBottom) conversation.scrollTop = nearBottom;
+    conversation.scrollTo({ top: conversation.scrollHeight, behavior });
+  }
+
+  function handleConversationScroll() {
+    if (!conversation) return;
+    const top = conversation.scrollTop;
+    const distance = conversation.scrollHeight - top - conversation.clientHeight;
+    // Lepas dari bawah hanya bila posisi bergerak naik. Scroll anchoring browser (saat grafik/gambar
+    // selesai dimuat) hanya menambah scrollTop, jadi tidak boleh dianggap pengguna menggulir ke atas.
+    if (distance < 80) pinnedToBottom = true;
+    else if (top < lastScrollTop - 1) pinnedToBottom = false;
+    lastScrollTop = top;
+    showJump = distance > 320;
+    if (top < 320) void loadOlder();
+  }
+
+  // Tetap menempel di bawah saat isi bertambah (streaming, gambar/grafik selesai dimuat, composer membesar).
+  $effect(() => {
+    const scroller = conversation;
+    const inner = conversationInner;
+    if (!scroller || !inner) return;
+    const observer = new ResizeObserver(() => {
+      if (pinnedToBottom) scroller.scrollTop = scroller.scrollHeight;
+    });
+    observer.observe(inner);
+    observer.observe(scroller);
+    return () => observer.disconnect();
+  });
+
+  async function fetchMessagePage(id: string, before?: string): Promise<MessagePage | null> {
+    const params = new URLSearchParams({ id, limit: String(MESSAGE_PAGE_SIZE) });
+    if (before) params.set('before', before);
+    const response = await fetch(`/api/history?${params}`);
+    if (response.status === 401) { await goto('/login'); return null; }
+    if (!response.ok) throw new Error('Gagal memuat percakapan.');
+    return response.json();
+  }
+
+  async function loadOlder() {
+    if (!hasOlder || loadingOlder || loadingConversation || !activeConversationId || !messages.length || !conversation) return;
+    const request = openRequest;
+    loadingOlder = true;
+    let loaded = false;
+    try {
+      const page = await fetchMessagePage(activeConversationId, messages[0].id);
+      if (!page || request !== openRequest || !conversation) return;
+      const known = new Set(messages.map((message) => message.id));
+      const previousHeight = conversation.scrollHeight;
+      const previousTop = conversation.scrollTop;
+      messages = [...page.messages.filter((message) => !known.has(message.id)), ...messages];
+      hasOlder = page.hasMore;
+      await tick();
+      // Pertahankan posisi baca; lewati bila browser sudah menjangkar scroll sendiri.
+      if (conversation && Math.abs(conversation.scrollTop - previousTop) < 1) {
+        conversation.scrollTop = previousTop + (conversation.scrollHeight - previousHeight);
+      }
+      loaded = true;
+    } catch { /* Coba lagi pada scroll berikutnya. */ }
+    finally { loadingOlder = false; }
+    if (loaded && request === openRequest && conversation && conversation.scrollTop < 320) void loadOlder();
   }
 
   function extractError(raw: string) {
@@ -183,29 +278,37 @@
     } catch { return raw || 'Permintaan gagal diproses.'; }
   }
 
-  function conversationFrom(nextMessages: ChatMessage[]): Conversation {
-    const existing = conversations.find((item) => item.id === activeConversationId);
+  /** Simpan hanya pesan yang berubah; server menggabungkannya ke riwayat berdasarkan id. */
+  async function persistMessages(changed: ChatMessage[]) {
+    if (!activeConversationId || changed.length === 0) return;
+    const id = activeConversationId;
+    const existing = conversations.find((item) => item.id === id);
     const now = new Date().toISOString();
-    const firstQuestion = nextMessages.find((item) => item.role === 'user')?.content || 'Percakapan baru';
-    return {
-      id: activeConversationId,
-      title: firstQuestion.replace(/\s+/g, ' ').trim().slice(0, 52),
+    const firstQuestion = changed.find((item) => item.role === 'user')?.content || 'Percakapan baru';
+    const summary: ConversationSummary = {
+      id,
+      title: existing?.title || firstQuestion.replace(/\s+/g, ' ').trim().slice(0, 52),
       model,
-      messages: nextMessages,
-      ...(activeContext || existing?.context ? { context: activeContext || existing?.context } : {}),
+      messageCount: existing?.messageCount || 0,
       createdAt: existing?.createdAt || now,
       updatedAt: now
     };
-  }
-
-  async function persistConversation(nextMessages = messages) {
-    if (!activeConversationId || nextMessages.length === 0) return;
-    const saved = conversationFrom(nextMessages);
-    conversations = [saved, ...conversations.filter((item) => item.id !== saved.id)];
+    if (!existing) historyTotal += 1;
+    conversations = [summary, ...conversations.filter((item) => item.id !== id)];
     try {
-      const response = await fetch('/api/history', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(saved) });
-      if (response.status === 401) await goto('/login');
-    } catch { /* Simpan ulang setelah respons berikutnya. */ }
+      const response = await fetch('/api/history', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...summary,
+          messages: changed.map(({ id: messageId, role, content, attachments }) => ({ id: messageId, role, content, ...(attachments?.length ? { attachments } : {}) })),
+          ...(activeContext ? { context: activeContext } : {})
+        })
+      });
+      if (response.status === 401) return goto('/login');
+      const result = await response.json().catch(() => null);
+      if (result?.conversation) conversations = conversations.map((item) => item.id === id ? result.conversation : item);
+    } catch { /* Pesan tetap ada di layar; tersimpan pada penyimpanan berikutnya. */ }
   }
 
   async function sendMessage() {
@@ -222,14 +325,15 @@
     };
     const assistantMessage: ChatMessage = { id: makeId(), role: 'assistant', content: '' };
     const previousMessages = [...messages, userMessage];
-    const requestMessages = previousMessages.map(({ id, role, content: value, attachments }) => ({
+    const requestMessages = previousMessages.slice(-CHAT_REQUEST_WINDOW).map(({ id, role, content: value, attachments }) => ({
       id,
       role,
       content: value,
       ...(attachments?.length ? { attachments } : {})
     }));
     messages = [...previousMessages, assistantMessage];
-    await persistConversation(previousMessages);
+    await jumpToBottom();
+    await persistMessages([userMessage]);
     pendingAttachment = null;
     uploadError = '';
     prompt = '';
@@ -245,15 +349,21 @@
     outputTokens = 0;
     throughput = [0, 0, 0, 0, 0, 0, 0, 0];
     abortController = new AbortController();
-    await scrollToBottom(true);
 
     let generated = '';
+    let usageBase = 0;
+    // Awal tiap lanjutan ditahan sebentar agar teks yang diulang model bisa dibuang sebelum tampil.
+    let continuation: string | null = null;
+    const settleContinuation = () => {
+      if (continuation === null) return;
+      generated += trimContinuationOverlap(generated, continuation);
+      continuation = null;
+    };
     let renderFrame = 0;
     const flushAssistant = () => {
       if (renderFrame) cancelAnimationFrame(renderFrame);
       renderFrame = 0;
       messages = messages.map((message) => message.id === assistantMessage.id ? { ...message, content: generated } : message);
-      void scrollToBottom();
     };
     const scheduleRender = () => { if (!renderFrame) renderFrame = requestAnimationFrame(flushAssistant); };
 
@@ -281,18 +391,36 @@
               thinkingLabel = 'Konteks lama telah diringkas';
               continue;
             }
+            if (payload.type === 'response.continued') {
+              // Server meminta model melanjutkan jawaban yang terpotong batas panjang.
+              settleContinuation();
+              continuation = '';
+              usageBase = outputTokens;
+              thinkingLabel = 'Melanjutkan jawaban';
+              continue;
+            }
+            if (payload.type === 'response.truncated') {
+              settleContinuation();
+              generated += '\n\n> Jawaban mencapai batas panjang maksimum. Ketik "lanjutkan" untuk meneruskan.';
+              scheduleRender();
+              continue;
+            }
             const delta = payload.choices?.[0]?.delta;
             if (delta?.reasoning_content && !generated) thinkingLabel = 'Menalar jawaban';
             if (delta?.content) {
               if (!firstTokenMs) firstTokenMs = Math.round(performance.now() - startedAt);
               thinkingLabel = 'Menulis jawaban';
-              generated += delta.content;
-              outputTokens = payload.usage?.completion_tokens || Math.ceil(generated.length / 4);
+              if (continuation === null) generated += delta.content;
+              else {
+                continuation += delta.content;
+                if (continuation.length >= 400) settleContinuation();
+              }
+              outputTokens = payload.usage?.completion_tokens ? usageBase + payload.usage.completion_tokens : Math.ceil(generated.length / 4);
               const seconds = Math.max((performance.now() - startedAt) / 1000, 0.1);
               throughput = [...throughput.slice(-11), Math.round((outputTokens / seconds) * 10) / 10];
               scheduleRender();
             }
-            if (payload.usage?.completion_tokens) outputTokens = payload.usage.completion_tokens;
+            if (payload.usage?.completion_tokens) outputTokens = usageBase + payload.usage.completion_tokens;
           } catch { /* Abaikan event keep-alive non-JSON. */ }
         }
       };
@@ -306,15 +434,21 @@
         events.forEach(processEvent);
       }
       if (buffer.trim()) processEvent(buffer);
+      settleContinuation();
       flushAssistant();
     } catch (error) {
+      settleContinuation();
       flushAssistant();
       if ((error as Error).name !== 'AbortError') { generated = `Maaf, terjadi kendala: ${(error as Error).message}`; flushAssistant(); }
     } finally {
       streaming = false;
       abortController = null;
-      await persistConversation(messages);
-      await scrollToBottom(true);
+      if (generated) {
+        await persistMessages([{ ...assistantMessage, content: generated }]);
+      } else {
+        // Dihentikan sebelum ada token: jangan tinggalkan balasan kosong di riwayat.
+        messages = messages.filter((message) => message.id !== assistantMessage.id);
+      }
     }
   }
 
@@ -322,10 +456,15 @@
 
   function resetChat() {
     abortController?.abort();
+    openRequest += 1;
     streaming = false;
     messages = [];
     activeConversationId = '';
     activeContext = null;
+    hasOlder = false;
+    loadingConversation = false;
+    conversationError = '';
+    showJump = false;
     firstTokenMs = 0;
     outputTokens = 0;
     throughput = [0, 0, 0, 0, 0, 0, 0, 0];
@@ -335,18 +474,40 @@
     tick().then(() => textarea?.focus());
   }
 
-  async function openConversation(item: Conversation) {
+  async function openConversation(item: ConversationSummary) {
     if (streaming) return;
+    sidebarOpen = false;
+    if (item.id === activeConversationId && !conversationError) return jumpToBottom();
+    const request = ++openRequest;
     activeConversationId = item.id;
-    activeContext = item.context || null;
+    activeContext = null;
     model = models.some((entry) => entry.value === item.model) ? item.model : DEFAULT_CHAT_MODEL;
-    messages = item.messages;
+    messages = [];
+    hasOlder = false;
+    conversationError = '';
+    loadingConversation = true;
+    pinnedToBottom = true;
+    showJump = false;
     void discardPendingAttachment();
     firstTokenMs = 0;
     outputTokens = 0;
     throughput = [0, 0, 0, 0, 0, 0, 0, 0];
-    sidebarOpen = false;
-    await scrollToBottom(true);
+    try {
+      // Hanya halaman terakhir yang dimuat; pesan lama menyusul saat pengguna scroll ke atas.
+      const page = await fetchMessagePage(item.id);
+      if (!page || request !== openRequest) return;
+      messages = page.messages;
+      hasOlder = page.hasMore;
+      activeContext = page.conversation.context || null;
+    } catch {
+      if (request === openRequest) conversationError = 'Percakapan gagal dimuat. Pilih lagi untuk mencoba ulang.';
+    } finally {
+      if (request === openRequest) loadingConversation = false;
+    }
+    if (request !== openRequest) return;
+    await jumpToBottom();
+    // Isi lebih pendek dari layar: langsung isi dengan pesan sebelumnya.
+    if (conversation && conversation.scrollHeight <= conversation.clientHeight + 320) void loadOlder();
   }
 
   async function removeConversation(event: MouseEvent, id: string) {
@@ -355,6 +516,7 @@
     try {
       const response = await fetch(`/api/history?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
       if (!response.ok) return;
+      if (conversations.some((item) => item.id === id)) historyTotal = Math.max(0, historyTotal - 1);
       conversations = conversations.filter((item) => item.id !== id);
       if (activeConversationId === id) resetChat();
     } catch { /* Pertahankan item bila server tidak dapat dijangkau. */ }
@@ -408,8 +570,8 @@
     </section>
 
     <section class="history-section">
-      <div class="history-heading"><p class="eyebrow">Riwayat</p>{#if !sidebarCollapsed}<span>{conversations.length}</span>{/if}</div>
-      <div class="history-list">
+      <div class="history-heading"><p class="eyebrow">Riwayat</p>{#if !sidebarCollapsed}<span>{historyTotal}</span>{/if}</div>
+      <div class="history-list" onscroll={handleHistoryScroll}>
         {#if historyLoading}
           <div class="history-empty"><i></i><span>Memuat riwayat…</span></div>
         {:else if conversations.length === 0}
@@ -421,6 +583,11 @@
               <button class="history-delete" onclick={(event) => removeConversation(event, item.id)} aria-label={`Hapus ${item.title}`}><X size={13} /></button>
             </div>
           {/each}
+          {#if historyNextOffset !== null}
+            <button class="history-more" onclick={() => loadHistory(true)} disabled={historyLoadingMore}>
+              {#if historyLoadingMore}<LoaderCircle size={14} /><span>Memuat…</span>{:else}<ChevronDown size={14} /><span>Muat lebih banyak</span>{/if}
+            </button>
+          {/if}
         {/if}
       </div>
     </section>
@@ -452,18 +619,27 @@
       <div class="topbar-actions">
         {#if activeConversationId}<button class="ghost-button danger" onclick={(event) => removeConversation(event, activeConversationId)}><Trash2 size={15} /> Hapus chat</button>{/if}
         <span class="connection"><i></i> API siap</span>
+        <button class="icon-button mobile-new" onclick={resetChat} aria-label="Percakapan baru" title="Percakapan baru"><SquarePen size={19} /></button>
       </div>
     </header>
 
-    <div class="workspace">
-      {#if messages.length === 0}
+    <div class="workspace" style:--composer-space={`${composerHeight}px`}>
+      {#if !activeConversationId && messages.length === 0}
         <section class="empty-state">
           <div class="hero"><div class="hero-icon"><Sparkles size={26} /></div><p class="overline">SOLAR CHAT · PRIVATE AI WORKSPACE</p><h1>Mulai dengan sebuah <em>ide.</em></h1><p class="hero-copy">Tanyakan apa saja. Percakapan tersimpan dan konteksnya tetap terjaga.</p></div>
           <div class="starter-grid">{#each starters as starter, index}<button class="starter-card" onclick={() => setStarter(starter.body)}><span class="starter-index">0{index + 1}</span><strong>{starter.title}</strong><span>{starter.body}</span><ArrowUp size={17} /></button>{/each}</div>
         </section>
       {:else}
-        <section class="conversation" bind:this={conversation} aria-live="polite">
-          <div class="conversation-inner">
+        <section class="conversation" bind:this={conversation} onscroll={handleConversationScroll} aria-live="polite" aria-busy={loadingConversation || loadingOlder}>
+          <div class="conversation-inner" bind:this={conversationInner}>
+            {#if hasOlder}
+              <div class="older-status">{#if loadingOlder}<LoaderCircle size={14} /><span>Memuat pesan sebelumnya…</span>{:else}<button onclick={loadOlder}>Muat pesan sebelumnya</button>{/if}</div>
+            {/if}
+            {#if loadingConversation}
+              <div class="conversation-skeleton" aria-label="Memuat percakapan">{#each [0, 1, 2] as row}<div class:assistant={row % 2 === 1}><i></i><span></span><span></span></div>{/each}</div>
+            {:else if conversationError}
+              <div class="conversation-error">{conversationError}</div>
+            {/if}
             {#each messages as message (message.id)}
               <article class:assistant={message.role === 'assistant'} class="message">
                 <div class="message-avatar">{#if message.role === 'assistant'}<Zap size={16} />{:else}<User size={16} />{/if}</div>
@@ -472,12 +648,12 @@
                   {#if message.attachments?.length}
                     <div class="message-attachments">
                       {#each message.attachments as attachment}
-                        <a href={attachment.url} target="_blank" rel="noreferrer" aria-label={`Buka ${attachment.name}`}><img src={attachment.url} alt={attachment.name} /></a>
+                        <button type="button" onclick={() => openImage(attachment.url, attachment.name, attachment.name)} aria-label={`Perbesar ${attachment.name}`}><img src={attachment.url} alt={attachment.name} loading="lazy" decoding="async" /></button>
                       {/each}
                     </div>
                   {/if}
                   {#if message.content}
-                    {#if message.role === 'assistant'}<Markdown content={message.content} />{:else}<p>{message.content}</p>{/if}
+                    {#if message.role === 'assistant'}<Markdown content={message.content} streaming={streaming && message === messages[messages.length - 1]} />{:else}<p>{message.content}</p>{/if}
                     {#if message.role === 'assistant' && streaming && message === messages[messages.length - 1]}<span class="cursor"></span>{/if}
                   {:else}<div class="thinking"><i></i><i></i><i></i><span>{thinkingLabel}</span></div>{/if}
                 </div>
@@ -485,9 +661,12 @@
             {/each}
           </div>
         </section>
+        {#if showJump}
+          <button class="jump-button" style:bottom={`${composerHeight + 10}px`} onclick={() => jumpToBottom('smooth')} aria-label="Ke pesan terbaru"><ArrowDown size={17} /></button>
+        {/if}
       {/if}
 
-      <div class="composer-area">
+      <div class="composer-area" bind:clientHeight={composerHeight}>
         <div class="composer" class:focused={prompt.length > 0 || !!pendingAttachment}>
           {#if pendingAttachment}
             <div class="pending-attachment">
@@ -517,3 +696,5 @@
     </div>
   </main>
 </div>
+
+<ImageViewer />

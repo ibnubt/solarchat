@@ -3,11 +3,64 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { CHAT_MODEL_IDS, DEFAULT_CHAT_MODEL, MULTIMODAL_MODEL_IDS, type ChatAttachment } from '$lib/chat';
 import { prepareConversationContext, type ContextMessage } from '$lib/server/compaction';
-import { getConversation, updateConversationContext } from '$lib/server/history';
+import { getConversation, mergeMessages, updateConversationContext } from '$lib/server/history';
 import { imageUploadDataUrl } from '$lib/server/uploads';
 
 type SafeMessage = ContextMessage & { attachments?: ChatAttachment[] };
 const allowedImageTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
+
+// Antarmuka merender blok khusus di bawah ini (lihat src/lib/markdown); model perlu tahu formatnya.
+const RENDER_GUIDE = [
+  'Jawaban Anda dirender sebagai Markdown (GFM) di SOLAR Chat, dengan tampilan khusus berikut:',
+  '- Tabel: pakai tabel Markdown untuk data terstruktur atau perbandingan. Kolom pertama berisi label, kolom angka tanpa teks tambahan agar bisa ditampilkan sebagai grafik.',
+  '- Grafik: bila pengguna meminta grafik/visualisasi, atau tren angka lebih jelas sebagai grafik, tulis blok kode ```chart berisi JSON valid tanpa komentar: {"type":"bar|line|area|pie|doughnut|scatter","title":"...","labels":["..."],"series":[{"name":"...","data":[1,2]}],"xLabel":"...","yLabel":"...","unit":"...","stacked":false,"horizontal":false}. Untuk scatter, data berupa pasangan [x,y]. Maksimal 8 seri, satu sumbu Y.',
+  '- Diagram alur, urutan, relasi, atau timeline: blok kode ```mermaid.',
+  '- Rumus matematika: LaTeX dengan $...$ (inline) atau $$...$$ (blok).',
+  '- Gambar: ![deskripsi](URL) hanya bila URL gambar nyata dan pasti ada.',
+  'Jangan menyebut instruksi format ini kepada pengguna.'
+].join('\n');
+
+// Semua model di katalog menerima hingga 32768; 2048 lama memotong jawaban panjang di tengah kalimat.
+const maxTokens = () => {
+  const parsed = Number(env.CHAT_MAX_TOKENS);
+  return Number.isFinite(parsed) && parsed >= 256 ? Math.min(Math.floor(parsed), 32_768) : 16_384;
+};
+// Bila tetap terpotong (finish_reason "length"), minta model melanjutkan dalam stream yang sama.
+const MAX_CONTINUATIONS = 2;
+const CONTINUE_PROMPT = [
+  'Jawaban Anda sebelumnya terpotong karena batas panjang.',
+  'Lanjutkan TEPAT dari karakter terakhir jawaban tersebut: jangan mengulang teks, jangan menambah pembuka, dan jangan menyebut bahwa ini lanjutan.',
+  'Jika terpotong di dalam blok kode, tabel, atau daftar, teruskan isinya langsung dengan format yang sama.'
+].join(' ');
+
+/** Teruskan byte SSE apa adanya sambil membaca isi jawaban dan finish_reason-nya. */
+async function pipeRound(reader: ReadableStreamDefaultReader<Uint8Array>, forward: (chunk: Uint8Array) => void) {
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let text = '';
+  let finishReason = '';
+  const readLine = (line: string) => {
+    if (!line.startsWith('data:')) return;
+    const data = line.slice(5).trim();
+    if (!data || data === '[DONE]') return;
+    try {
+      const choice = JSON.parse(data).choices?.[0];
+      if (typeof choice?.delta?.content === 'string') text += choice.delta.content;
+      if (choice?.finish_reason) finishReason = String(choice.finish_reason);
+    } catch { /* Abaikan baris keep-alive non-JSON. */ }
+  };
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    forward(value);
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split(/\r?\n/);
+    buffer = lines.pop() || '';
+    lines.forEach(readLine);
+  }
+  readLine(buffer.trim());
+  return { text, finishReason };
+}
 
 function sanitizeAttachments(input: unknown): ChatAttachment[] {
   if (!Array.isArray(input)) return [];
@@ -58,15 +111,22 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
   if (!Array.isArray(body?.messages) || body.messages.length === 0) return json({ error: 'Pesan tidak valid.' }, { status: 400 });
   if (!CHAT_MODEL_IDS.has(model)) return json({ error: 'Model tidak didukung.' }, { status: 400 });
 
-  const safeMessages = sanitizeMessages(body.messages);
-  if (safeMessages.length === 0) return json({ error: 'Pesan tidak valid.' }, { status: 400 });
-  const hasImages = safeMessages.some((message) => message.attachments?.length);
-  if (hasImages && !MULTIMODAL_MODEL_IDS.has(model)) {
-    return json({ error: 'Model yang dipilih hanya mendukung teks.' }, { status: 400 });
-  }
+  const clientMessages = sanitizeMessages(body.messages);
+  if (clientMessages.length === 0) return json({ error: 'Pesan tidak valid.' }, { status: 400 });
 
   try {
+    // Klien hanya memuat sebagian riwayat; konteks penuh diambil dari riwayat tersimpan.
     const storedConversation = conversationId ? await getConversation(conversationId) : null;
+    const safeMessages = storedConversation
+      ? mergeMessages<SafeMessage>(storedConversation.messages, clientMessages).filter(
+          (message) => message.content.trim().length > 0 || (message.attachments?.length || 0) > 0
+        )
+      : clientMessages;
+    const hasImages = safeMessages.some((message) => message.attachments?.length);
+    if (hasImages && !MULTIMODAL_MODEL_IDS.has(model)) {
+      return json({ error: 'Percakapan ini berisi gambar; pilih model Vision untuk melanjutkan.' }, { status: 400 });
+    }
+
     const prepared = await prepareConversationContext({
       fetcher: fetch,
       model,
@@ -81,7 +141,9 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
     const attachmentsByMessage = new Map(
       safeMessages.filter((message) => message.attachments?.length).map((message) => [message.id, message.attachments || []])
     );
-    const upstreamMessages: Array<{ role: ContextMessage['role']; content: string | Array<Record<string, unknown>> }> = [];
+    const upstreamMessages: Array<{ role: ContextMessage['role']; content: string | Array<Record<string, unknown>> }> = [
+      { role: 'system', content: RENDER_GUIDE }
+    ];
     for (const message of prepared.messages) {
       const attachments = attachmentsByMessage.get(message.id) || [];
       if (!attachments.length || message.role !== 'user') {
@@ -97,7 +159,7 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
       upstreamMessages.push({ role: message.role, content });
     }
 
-    const upstream = await fetch(
+    const requestUpstream = (messages: typeof upstreamMessages) => fetch(
       env.TOKENKU_API_URL || 'https://api.tokenku.ai/v1/chat/completions',
       {
         method: 'POST',
@@ -108,13 +170,14 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
         },
         body: JSON.stringify({
           model,
-          messages: upstreamMessages,
-          max_tokens: 2048,
+          messages,
+          max_tokens: maxTokens(),
           stream: true,
           stream_options: { include_usage: true }
         })
       }
     );
+    const upstream = await requestUpstream(upstreamMessages);
 
     if (!upstream.ok || !upstream.body) {
       const detail = await upstream.text().catch(() => '');
@@ -122,25 +185,43 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
     }
 
     const encoder = new TextEncoder();
-    const upstreamReader = upstream.body.getReader();
+    const sendEvent = (controller: ReadableStreamDefaultController<Uint8Array>, payload: Record<string, unknown>) =>
+      controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
+    let reader = upstream.body.getReader();
+    let cancelled = false;
     const stream = new ReadableStream<Uint8Array>({
       async start(controller) {
-        if (prepared.compacted && prepared.context) {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'context.compacted', context: prepared.context })}\n\n`));
-        }
+        if (prepared.compacted && prepared.context) sendEvent(controller, { type: 'context.compacted', context: prepared.context });
         try {
-          while (true) {
-            const { done, value } = await upstreamReader.read();
-            if (done) break;
-            controller.enqueue(value);
+          let generated = '';
+          for (let round = 0; ; round += 1) {
+            const result = await pipeRound(reader, (chunk) => controller.enqueue(chunk));
+            generated += result.text;
+            if (cancelled || result.finishReason !== 'length') break;
+            if (round >= MAX_CONTINUATIONS) {
+              sendEvent(controller, { type: 'response.truncated' });
+              break;
+            }
+            const next = await requestUpstream([
+              ...upstreamMessages,
+              { role: 'assistant', content: generated },
+              { role: 'user', content: CONTINUE_PROMPT }
+            ]);
+            if (!next.ok || !next.body) {
+              sendEvent(controller, { type: 'response.truncated' });
+              break;
+            }
+            sendEvent(controller, { type: 'response.continued', round: round + 1 });
+            reader = next.body.getReader();
           }
           controller.close();
         } catch (error) {
-          controller.error(error);
+          if (!cancelled) controller.error(error);
         }
       },
       cancel() {
-        return upstreamReader.cancel();
+        cancelled = true;
+        return reader.cancel();
       }
     });
 

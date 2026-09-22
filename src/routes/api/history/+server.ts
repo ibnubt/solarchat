@@ -3,8 +3,11 @@ import type { RequestHandler } from './$types';
 import type { ChatAttachment } from '$lib/chat';
 import {
   deleteConversation,
-  listConversations,
-  saveConversation,
+  getConversationPage,
+  listConversationSummaries,
+  MAX_STORED_MESSAGES,
+  toSummary,
+  upsertConversation,
   type ConversationContext,
   type StoredConversation
 } from '$lib/server/history';
@@ -36,7 +39,7 @@ function sanitizeConversation(input: unknown): StoredConversation | null {
   if (typeof value.id !== 'string' || !Array.isArray(value.messages)) return null;
 
   const messages = value.messages
-    .slice(-1000)
+    .slice(-MAX_STORED_MESSAGES)
     .filter((message): message is Record<string, unknown> => !!message && typeof message === 'object')
     .filter((message) => allowedRoles.has(String(message.role)) && typeof message.content === 'string')
     .map((message) => {
@@ -75,13 +78,33 @@ function sanitizeConversation(input: unknown): StoredConversation | null {
   };
 }
 
-export const GET: RequestHandler = async () => json({ conversations: await listConversations() });
+const intParam = (value: string | null, fallback: number, max: number) => {
+  const parsed = Number.parseInt(value || '', 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.min(parsed, max) : fallback;
+};
 
+/**
+ * Tanpa `id`: daftar ringkas percakapan (tanpa isi pesan), berhalaman lewat `offset` & `limit`.
+ * Dengan `id`: satu halaman pesan terbaru, atau pesan sebelum `before` untuk memuat yang lebih lama.
+ */
+export const GET: RequestHandler = async ({ url }) => {
+  const id = url.searchParams.get('id');
+  if (!id) {
+    const offset = intParam(url.searchParams.get('offset'), 0, Number.MAX_SAFE_INTEGER);
+    const limit = Math.max(1, intParam(url.searchParams.get('limit'), 30, 100));
+    return json(await listConversationSummaries(offset, limit));
+  }
+  const limit = Math.max(1, intParam(url.searchParams.get('limit'), 30, 200));
+  const page = await getConversationPage(id, url.searchParams.get('before'), limit);
+  if (!page) return json({ error: 'Percakapan tidak ditemukan.' }, { status: 404 });
+  return json(page);
+};
+
+/** Pesan yang dikirim digabung (berdasarkan id) ke riwayat tersimpan, bukan menggantikannya. */
 export const PUT: RequestHandler = async ({ request }) => {
   const conversation = sanitizeConversation(await request.json().catch(() => null));
   if (!conversation) return json({ error: 'Data percakapan tidak valid.' }, { status: 400 });
-  await saveConversation(conversation);
-  return json({ conversation });
+  return json({ conversation: toSummary(await upsertConversation(conversation)) });
 };
 
 export const DELETE: RequestHandler = async ({ url }) => {

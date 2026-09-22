@@ -37,3 +37,16 @@ export const CHAT_MODEL_IDS = new Set(CHAT_MODELS.map((model) => model.value));
 export const MULTIMODAL_MODEL_IDS = new Set(
   CHAT_MODELS.filter((model) => model.multimodal).map((model) => model.value)
 );
+
+/**
+ * Saat jawaban dilanjutkan setelah terpotong, model kadang mengulang ekor teks sebelumnya.
+ * Buang awalan `next` yang sama dengan akhiran `previous` (minimal 12 karakter).
+ */
+export function trimContinuationOverlap(previous: string, next: string, maxOverlap = 400) {
+  for (const candidate of [next, next.replace(/^\s+/, '')]) {
+    for (let size = Math.min(candidate.length, previous.length, maxOverlap); size >= 12; size -= 1) {
+      if (previous.endsWith(candidate.slice(0, size))) return candidate.slice(size);
+    }
+  }
+  return next;
+}

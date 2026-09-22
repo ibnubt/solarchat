@@ -1,41 +1,45 @@
 <script lang="ts">
   import { browser } from '$app/environment';
-  import DOMPurify from 'dompurify';
-  import { marked } from 'marked';
+  import { openImage } from '$lib/viewer.svelte';
+  import ChartBlock from './markdown/ChartBlock.svelte';
+  import CodeBlock from './markdown/CodeBlock.svelte';
+  import HtmlBlock from './markdown/HtmlBlock.svelte';
+  import MermaidBlock from './markdown/MermaidBlock.svelte';
+  import TableBlock from './markdown/TableBlock.svelte';
+  import { toBlocks } from './markdown/parse';
+  import './markdown/blocks.css';
 
-  let { content }: { content: string } = $props();
+  let { content, streaming = false }: { content: string; streaming?: boolean } = $props();
+  let root: HTMLDivElement | undefined = $state();
 
-  function renderMarkdown(value: string) {
-    if (!browser || !value) return '';
-    const rendered = marked.parse(value, { breaks: true, gfm: true });
-    return DOMPurify.sanitize(String(rendered), {
-      USE_PROFILES: { html: true },
-      ADD_ATTR: ['target', 'rel']
-    });
-  }
+  // Setiap blok tingkat atas dirender terpisah: saat streaming hanya blok terakhir yang berubah.
+  const blocks = $derived(browser ? toBlocks(content) : []);
 
-  let html = $derived(renderMarkdown(content));
+  $effect(() => {
+    if (!root) return;
+    const element = root;
+    const openFromMarkdown = (event: MouseEvent) => {
+      const button = (event.target as HTMLElement).closest<HTMLButtonElement>('button.md-image');
+      const image = button?.querySelector('img');
+      if (image?.src) openImage(image.src, image.alt);
+    };
+    element.addEventListener('click', openFromMarkdown);
+    return () => element.removeEventListener('click', openFromMarkdown);
+  });
 </script>
 
-<div class="markdown">{@html html}</div>
-
-<style>
-  .markdown :global(p) { margin: 0 0 12px; }
-  .markdown :global(p:last-child) { margin-bottom: 0; }
-  .markdown :global(h1), .markdown :global(h2), .markdown :global(h3) { margin: 22px 0 10px; line-height: 1.25; letter-spacing: -.025em; }
-  .markdown :global(h1:first-child), .markdown :global(h2:first-child), .markdown :global(h3:first-child) { margin-top: 0; }
-  .markdown :global(h1) { font-size: 1.35rem; }
-  .markdown :global(h2) { font-size: 1.18rem; }
-  .markdown :global(h3) { font-size: 1.05rem; }
-  .markdown :global(ul), .markdown :global(ol) { margin: 8px 0 14px; padding-left: 22px; }
-  .markdown :global(li) { margin: 5px 0; }
-  .markdown :global(blockquote) { margin: 14px 0; padding: 8px 14px; border-left: 3px solid #8fbd34; background: #f2f5ec; color: #586052; }
-  .markdown :global(code) { padding: 2px 5px; border-radius: 5px; background: #edf0e8; color: #496b0d; font-family: 'DM Mono', monospace; font-size: .88em; }
-  .markdown :global(pre) { margin: 14px 0; padding: 15px 16px; overflow-x: auto; border: 1px solid #dce1d7; border-radius: 11px; background: #20241f; color: #eef2e9; }
-  .markdown :global(pre code) { padding: 0; background: transparent; color: inherit; }
-  .markdown :global(a) { color: #5d870d; text-underline-offset: 3px; }
-  .markdown :global(hr) { margin: 20px 0; border: 0; border-top: 1px solid #dfe3da; }
-  .markdown :global(table) { width: 100%; margin: 14px 0; border-collapse: collapse; font-size: .92em; }
-  .markdown :global(th), .markdown :global(td) { padding: 8px 10px; border: 1px solid #dce1d7; text-align: left; }
-  .markdown :global(th) { background: #f0f3eb; }
-</style>
+<div class="markdown" bind:this={root}>
+  {#each blocks as block, index (index)}
+    {#if block.kind === 'code'}
+      <CodeBlock code={block.code} lang={block.lang} streaming={streaming && index === blocks.length - 1} />
+    {:else if block.kind === 'chart'}
+      <ChartBlock source={block.source} streaming={streaming && index === blocks.length - 1} />
+    {:else if block.kind === 'mermaid'}
+      <MermaidBlock source={block.source} streaming={streaming && index === blocks.length - 1} />
+    {:else if block.kind === 'table'}
+      <TableBlock table={block.table} />
+    {:else}
+      <HtmlBlock html={block.html} tag={block.tag} />
+    {/if}
+  {/each}
+</div>
