@@ -17,6 +17,17 @@ Riwayat disimpan pada `CHAT_DATA_FILE`, sedangkan gambar percakapan disimpan pad
 
 Model di antarmuka dikurasi dari katalog biaya Tokenku. Tombol gambar hanya ditampilkan untuk model multimodal. Upload menerima JPEG, PNG, atau WebP dengan ukuran maksimal 5 MB; file tetap terlindungi oleh login aplikasi.
 
+## Secret produksi (Doppler)
+
+Secret produksi disimpan di Doppler (project `solarchat`, config `prd`), bukan di git. Server hanya memegang service token baca-saja di `/home/inu/.config/solarchat/doppler.env`.
+
+- `scripts/start.sh` menjalankan aplikasi lewat `doppler run`: secret Doppler menang atas `.env`, variabel lain tetap dibaca dari `.env`. Salinan terenkripsi terakhir dipakai bila Doppler tidak terjangkau.
+- `deploy.sh` (timer tiap menit) juga me-restart service bila isi secret di Doppler berubah, jadi menambah/mengganti secret tidak perlu commit.
+- Setup server sekali jalan: `bash scripts/setup-doppler-server.sh`.
+- Menambah secret dari laptop: `doppler secrets set NAMA=nilai -p solarchat -c prd`.
+
+Pengembangan lokal tetap memakai `.env`.
+
 ## Laporan POC Tokenku
 
 Jalankan suite benchmark terkontrol dengan:
