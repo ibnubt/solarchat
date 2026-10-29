@@ -8,12 +8,12 @@
   import ChartBlock from '$lib/markdown/ChartBlock.svelte';
   import type { ChartSpec } from '$lib/markdown/chart';
   import { CHAT_PROFILE, USD_TO_IDR, type PairMetrics, type Sample, type SupplierReport } from '$lib/poc/suppliers';
-  import { METHOD_NOTES, WHAT_TESTED, cardSummary, conclusion, limitations } from '$lib/poc/narrative';
+  import { HOW_TO_READ, METHOD_NOTES, WHAT_TESTED, cardSummary, conclusion, limitations } from '$lib/poc/narrative';
   import '$lib/markdown/blocks.css';
 
   type Analysis = {
     findings: Array<{ tone: 'baik' | 'perhatian' | 'risiko'; text: string }>;
-    scenarios: Array<{ name: string; total: number; perPair: number }>;
+    scenarios: Array<{ name: string; total: number; perPair: number; contextTokens: number }>;
     pairs: PairMetrics[];
     models: string[];
     chains: Array<{ model: string; chain: string[]; primary: PairMetrics; alternatives: number; savingPercent: number }>;
@@ -129,6 +129,9 @@
 
       <section class="section-block" id="pilihan">
         <div class="section-heading"><div><p>PILIHAN PER MODEL</p><h2>Supplier mana untuk model mana</h2></div><span>Dipilih yang termurah selama mutu dan keandalannya setara</span></div>
+        <dl class="legend">
+          {#each HOW_TO_READ as h}<div><dt>{h.term}</dt><dd>{h.text}</dd></div>{/each}
+        </dl>
         <div class="decision-grid">
           {#each analysis.chains as item}
             {@const card = cardSummary(item.primary, analysis.pairs.filter((p) => p.model === item.model))}
@@ -137,15 +140,14 @@
               <p class="choice"><strong>{item.primary.supplier}</strong></p>
               <p class="why">{card.reason}</p>
               <dl>
-                <div><dt>Permintaan berhasil</dt><dd>{pct(item.primary.reliability)}</dd></div>
-                <div><dt>Mulai merespons</dt><dd>{ms(item.primary.ttftAnyP95)}</dd></div>
-                <div><dt>Biaya 1.000 chat</dt><dd>{rupiah(item.primary.costPer1000ChatsUsd)}</dd></div>
+                <div><dt>Berhasil</dt><dd>{pct(item.primary.reliability)}<small>{card.failNote}</small></dd></div>
+                <div><dt>Waktu tunggu</dt><dd>{ms(item.primary.ttftAnyP95)}<small>wajar di bawah 3 detik</small></dd></div>
+                <div><dt>Biaya 1.000 chat</dt><dd>{rupiah(item.primary.costPer1000ChatsUsd)}<small>{card.comparison ?? 'tidak ada pembanding'}</small></dd></div>
               </dl>
-              {#if card.comparison}<p class="compare">{card.comparison}</p>{/if}
               <p class="fallback">
-                {#if item.alternatives > 0}Cadangan bila bermasalah: {item.chain.slice(1).join(', ')}{:else}<b>Tidak ada cadangan.</b> Model ini hanya ada di satu supplier.{/if}
+                {#if item.alternatives > 0}Cadangan: {item.chain.slice(1).join(', ')}{:else}<b>Tidak ada cadangan.</b> Model ini hanya ada di satu supplier.{/if}
               </p>
-              {#if card.warnings.length}<p class="warn">Catatan: {card.warnings.join(', ')}.</p>{/if}
+              {#if card.warnings.length}<p class="warn">{card.warnings.join('. ')}.</p>{/if}
             </article>
           {/each}
         </div>
@@ -155,11 +157,11 @@
         <div class="section-heading"><div><p>YANG DIUJI</p><h2>Enam hal, pada setiap kombinasi</h2></div></div>
         <div class="rb-scroll">
           <table class="rb-table">
-            <thead><tr><th>Yang diuji</th><th>Caranya</th><th class="num">Berapa kali</th></tr></thead>
+            <thead><tr><th>Yang diuji</th><th>Caranya</th><th class="num">Konteks</th><th class="num">Berapa kali</th></tr></thead>
             <tbody>
               {#each WHAT_TESTED as w}
                 {@const c = analysis.scenarios.find((sc) => sc.name === w.scenario)}
-                <tr><td><strong>{w.name}</strong></td><td>{w.detail}</td><td class="num">{c ? c.total.toLocaleString('id-ID') : '—'}</td></tr>
+                <tr><td><strong>{w.name}</strong></td><td>{w.detail}</td><td class="num">{c ? `${c.contextTokens.toLocaleString('id-ID')} token` : '—'}</td><td class="num">{c ? c.total.toLocaleString('id-ID') : '—'}</td></tr>
               {/each}
             </tbody>
           </table>
@@ -362,7 +364,12 @@
   .points strong { display: block; color: #20241f; font-size: 14px; }
   .basis { margin: 20px 0 0; color: #868d82; font-size: 12px; }
   .why { margin: 2px 0 0; color: #6c7468; font-size: 11.5px; line-height: 1.55; }
-  .compare { margin: 8px 0 0; color: #868d82; font-family: 'DM Mono', monospace; font-size: 10px; }
+  .legend { margin: 0 0 14px; padding: 14px 16px; display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 12px 20px; border: 1px solid #dfe3da; border-radius: 12px; background: #f7f8f4; }
+  .legend dt { color: #20241f; font-size: 12px; font-weight: 700; }
+  .legend dd { margin: 3px 0 0; color: #5f665c; font-size: 11.5px; line-height: 1.55; }
+  .decision-grid dl div { align-items: start; }
+  .decision-grid dd { text-align: right; }
+  .decision-grid dd small { display: block; margin-top: 2px; color: #949b90; font-family: 'Manrope', sans-serif; font-size: 10px; font-weight: 400; }
   .warn { margin: 8px 0 0; padding-top: 8px; border-top: 1px solid #f1e3e0; color: #a54139; font-size: 11px; line-height: 1.5; }
   .cases { padding: 0 12px 12px; display: grid; gap: 10px; }
   .toc { position: sticky; top: 62px; z-index: 9; display: flex; flex-wrap: wrap; gap: 4px; margin: -6px -8px 0; padding: 8px; border-bottom: 1px solid #e6e9e1; background: rgba(249,250,246,.94); backdrop-filter: blur(8px); }

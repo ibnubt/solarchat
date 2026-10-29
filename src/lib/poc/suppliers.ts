@@ -179,10 +179,16 @@ export function analyse(report: SupplierReport) {
   }
   const pairCount = Math.max(pairs.length, 1);
   for (const row of scenarios.values()) row.perPair = Math.round(row.total / pairCount);
+  // Ukuran konteks tiap skenario diambil dari token masukan yang benar-benar terkirim.
+  const contextTokens = new Map<string, number>();
+  for (const [name] of scenarios) {
+    const sizes = report.samples.filter((s) => s.scenario === name && s.ok && s.inputTokens > 0).map((s) => s.inputTokens);
+    contextTokens.set(name, sizes.length ? (median(sizes) as number) : 0);
+  }
 
   return {
     findings,
-    scenarios: [...scenarios.entries()].map(([name, v]) => ({ name, ...v })),
+    scenarios: [...scenarios.entries()].map(([name, v]) => ({ name, ...v, contextTokens: contextTokens.get(name) ?? 0 })),
     pairs: pairs.sort((a, b) => a.model.localeCompare(b.model) || a.supplier.localeCompare(b.supplier)),
     models,
     chains,

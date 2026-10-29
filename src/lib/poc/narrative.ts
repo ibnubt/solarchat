@@ -3,17 +3,17 @@ import { USD_TO_IDR } from './suppliers';
 
 type Analysis = ReturnType<typeof analyse>;
 
-/** Kegagalan kriteria diterjemahkan ke kalimat yang bisa dipahami tanpa membaca definisi. */
+/**
+ * Hanya kekurangan yang belum terbaca dari angka di kartu. Kelambatan dan kegagalan
+ * sudah tampil sebagai angka, jadi tidak diulang sebagai kalimat.
+ */
 export const PLAIN_WARNING: Record<string, string> = {
-  reliability: 'pernah menolak permintaan',
-  ttftAny: 'lambat mulai merespons',
-  ttftContent: 'jawaban lama baru terbaca',
-  throughput: 'menulis jawaban pelan',
-  accuracy: 'jawaban sering salah',
-  chart: 'format grafik sering salah',
-  longAnswer: 'jawaban terpotong',
-  longContext: 'lupa isi riwayat panjang',
-  rateLimit: 'ditolak saat ramai'
+  throughput: 'Menulis jawaban pelan',
+  accuracy: 'Pernah menjawab salah',
+  chart: 'Format grafik pernah tidak terbaca',
+  longAnswer: 'Jawaban panjang pernah terpotong',
+  longContext: 'Pernah lupa isi riwayat panjang',
+  rateLimit: 'Pernah ditolak saat ramai'
 };
 
 /** Apa yang diuji, dalam ukuran yang bisa dibayangkan pembaca. */
@@ -23,7 +23,15 @@ export const WHAT_TESTED = [
   { name: 'Ketepatan jawaban', detail: '40 soal yang kuncinya pasti: hitungan, penarikan data, penalaran', scenario: 'akurasi' },
   { name: 'Permintaan grafik', detail: 'Diminta membuat grafik, hasilnya diperiksa bisa dibaca aplikasi', scenario: 'format-chart' },
   { name: 'Jawaban panjang', detail: 'Diminta uraian panjang, dicek selesai atau terpotong', scenario: 'jawaban-panjang' },
-  { name: 'Riwayat chat panjang', detail: 'Riwayat ±20 ribu token, satu kode ditanam di awal lalu ditanyakan di akhir', scenario: 'konteks-panjang' }
+  { name: 'Riwayat chat panjang', detail: 'Satu kode ditanam di awal riwayat lalu ditanyakan di akhir', scenario: 'konteks-panjang' }
+];
+
+/** Penjelasan istilah yang muncul di kartu, supaya pembaca tidak perlu menebak. */
+export const HOW_TO_READ = [
+  { term: 'Berhasil', text: 'Bagian permintaan yang dilayani sampai jawaban keluar. Gagal berarti ditolak server Tokenku atau sambungan putus di tengah jawaban. Gangguan jaringan di komputer penguji tidak ikut dihitung.' },
+  { term: 'Waktu tunggu', text: 'TTFT: jarak dari permintaan dikirim sampai token pertama keluar. Angka yang ditampilkan adalah p95, artinya 95% permintaan lebih cepat dari itu. Model di sini berpikir dulu, jadi teks jawaban baru terbaca beberapa detik setelahnya.' },
+  { term: 'Biaya 1.000 chat', text: 'Biaya mengirim 1.000 pesan chat. Satu pesan dihitung 1.500 token masuk (pertanyaan ditambah riwayat percakapan) dan 600 token jawaban. Tarifnya diukur dari tagihan sungguhan, lalu dikali pengali harga supplier.' },
+  { term: 'Cadangan', text: 'Supplier lain yang juga menyediakan model ini, diurutkan dari yang paling layak dipakai bila supplier utama bermasalah.' }
 ];
 
 export const METHOD_NOTES = [
@@ -45,7 +53,8 @@ export function conclusion(a: Analysis) {
   const slowest = withSpeed.reduce((worst, p) => ((p.ttftAnyP95 as number) > (worst.ttftAnyP95 as number) ? p : worst), withSpeed[0]);
 
   const acc = a.pairs.filter((p) => p.accuracy !== null);
-  const minAcc = acc.length ? Math.min(...acc.map((p) => p.accuracy as number)) : 0;
+  const totalQ = acc.reduce((s, p) => s + p.accuracyCount, 0);
+  const wrong = acc.reduce((s, p) => s + Math.round((1 - (p.accuracy as number)) * p.accuracyCount), 0);
 
   const solo = a.chains.filter((c) => c.alternatives === 0).map((c) => c.model);
   const empty = a.pairs.reduce((s, p) => s + p.emptyAnswers, 0);
@@ -56,8 +65,8 @@ export function conclusion(a: Analysis) {
       : 'Belum cukup data untuk menyimpulkan.',
     points: [
       {
-        label: 'Mutu sama di semua supplier',
-        text: `${acc.reduce((s, p) => s + p.accuracyCount, 0).toLocaleString('id-ID')} soal berkunci pasti dijawab benar minimal ${Math.round(minAcc * 100)}% di setiap supplier. Supplier murah tidak memberi model yang lebih buruk.`
+        label: 'Mutu jawaban semua supplier sama',
+        text: `Dari ${totalQ.toLocaleString('id-ID')} soal yang jawabannya bisa dicek benar-salah, ${wrong === 0 ? 'semuanya dijawab benar' : `${(totalQ - wrong).toLocaleString('id-ID')} dijawab benar dan hanya ${wrong} salah`}. Supplier murah tidak memberi jawaban yang lebih buruk.`
       },
       {
         label: 'Hemat, tapi hanya soal harga',
@@ -89,9 +98,13 @@ export function cardSummary(primary: PairMetrics, options: PairMetrics[]) {
         ? 'Termurah di antara supplier yang menyediakan model ini, dengan mutu jawaban yang sama.'
         : 'Paling sedikit masalahnya di antara supplier yang menyediakan model ini.',
     comparison: dearest && dearest.supplier !== primary.supplier
-      ? `Termahal: ${rp(dearest.costPer1000ChatsUsd)} di ${dearest.supplier}`
+      ? `termahal ${rp(dearest.costPer1000ChatsUsd)} di ${dearest.supplier}`
       : null,
-    warnings: primary.failedCriteria.map((id) => PLAIN_WARNING[id] ?? id)
+    failNote: primary.upstreamFailures > 0
+      ? `${primary.upstreamFailures} gagal dari ${primary.requests} permintaan`
+      : 'tidak ada yang gagal',
+    // Kriteria yang angkanya sudah tampil di kartu tidak diulang sebagai peringatan.
+    warnings: primary.failedCriteria.map((id) => PLAIN_WARNING[id]).filter(Boolean)
   };
 }
 
