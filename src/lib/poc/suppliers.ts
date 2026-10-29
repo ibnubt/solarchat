@@ -164,8 +164,19 @@ export function analyse(report: SupplierReport) {
   const totalCost = report.sessions.reduce((sum, s) => sum + ((s.usageEndUsd ?? 0) - (s.usageStartUsd ?? 0)), 0);
 
   const findings = buildFindings(pairs, chains);
+  // Jumlah permintaan per skenario, untuk tabel cara uji.
+  const scenarios = new Map<string, { total: number; perPair: number }>();
+  for (const sample of report.samples) {
+    const row = scenarios.get(sample.scenario) ?? { total: 0, perPair: 0 };
+    row.total += 1;
+    scenarios.set(sample.scenario, row);
+  }
+  const pairCount = Math.max(pairs.length, 1);
+  for (const row of scenarios.values()) row.perPair = Math.round(row.total / pairCount);
+
   return {
     findings,
+    scenarios: [...scenarios.entries()].map(([name, v]) => ({ name, ...v })),
     pairs: pairs.sort((a, b) => a.model.localeCompare(b.model) || a.supplier.localeCompare(b.supplier)),
     models,
     chains,

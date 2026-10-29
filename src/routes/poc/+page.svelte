@@ -8,11 +8,12 @@
   import ChartBlock from '$lib/markdown/ChartBlock.svelte';
   import type { ChartSpec } from '$lib/markdown/chart';
   import { CHAT_PROFILE, USD_TO_IDR, type PairMetrics, type Sample, type SupplierReport } from '$lib/poc/suppliers';
-  import { CORRECTIONS, PURPOSE, limitations, nextSteps, steps } from '$lib/poc/narrative';
+  import { METHOD_NOTES, PURPOSE, SCENARIO_PURPOSE, limitations, nextSteps } from '$lib/poc/narrative';
   import '$lib/markdown/blocks.css';
 
   type Analysis = {
     findings: Array<{ tone: 'baik' | 'perhatian' | 'risiko'; text: string }>;
+    scenarios: Array<{ name: string; total: number; perPair: number }>;
     pairs: PairMetrics[];
     models: string[];
     chains: Array<{ model: string; chain: string[]; primary: PairMetrics; alternatives: number; savingPercent: number }>;
@@ -36,20 +37,16 @@
   const short = (model: string) => model.replace(/-260428$/, '').replace('doubao-seed-', 'doubao-');
 
   const suppliers = $derived([...new Set(analysis?.pairs.map((p) => p.supplier) ?? [])].sort());
-  const process = $derived(analysis ? steps(analysis as never) : []);
   const limits = $derived(analysis ? limitations(analysis as never) : []);
   const next = $derived(analysis ? nextSteps(analysis as never) : []);
 
   const SECTIONS = [
     { id: 'keputusan', label: 'Keputusan' },
     { id: 'temuan', label: 'Temuan' },
-    { id: 'latar', label: 'Latar belakang' },
-    { id: 'jalannya', label: 'Jalannya uji' },
-    { id: 'kriteria', label: 'Kriteria' },
+    { id: 'cara', label: 'Cara uji' },
     { id: 'papan-nilai', label: 'Papan nilai' },
     { id: 'angka', label: 'Angka' },
     { id: 'rincian', label: 'Rincian' },
-    { id: 'koreksi', label: 'Koreksi' },
     { id: 'batasan', label: 'Batasan' },
     { id: 'lanjut', label: 'Langkah lanjut' },
     { id: 'lampiran', label: 'Lampiran' }
@@ -161,41 +158,26 @@
         </ul>
       </section>
 
-      <section class="section-block" id="latar">
-        <div class="section-heading"><div><p>LATAR BELAKANG</p><h2>Pertanyaan yang dijawab laporan ini</h2></div></div>
-        <div class="prose">
-          <p class="question">{PURPOSE.question}</p>
-          <p>{PURPOSE.why}</p>
-          <p>{PURPOSE.scope}</p>
-        </div>
-      </section>
-
-      <section class="section-block" id="jalannya">
-        <div class="section-heading"><div><p>JALANNYA UJI</p><h2>Langkah demi langkah</h2></div><span>Agar hasilnya bisa diulang atau dibantah</span></div>
-        <ol class="steps">
-          {#each process as step}
-            <li>
-              <span class="no">{step.no}</span>
-              <div>
-                <h3>{step.title}</h3>
-                <p>{step.body}</p>
-                {#if step.evidence}<p class="evidence">{step.evidence}</p>{/if}
-              </div>
-            </li>
-          {/each}
-        </ol>
-      </section>
-
-      <section class="section-block" id="kriteria">
-        <div class="section-heading"><div><p>KRITERIA</p><h2>Apa yang dianggap lulus</h2></div><span>Dikunci sebelum permintaan pertama dikirim</span></div>
+      <section class="section-block" id="cara">
+        <div class="section-heading"><div><p>CARA UJI</p><h2>Yang diukur dan ambang lulusnya</h2></div><span>{analysis.pairs.length} pasangan model-supplier</span></div>
+        <p class="purpose">{PURPOSE}</p>
         <div class="rb-scroll">
           <table class="rb-table">
-            <thead><tr><th>Kriteria</th><th>Ambang</th></tr></thead>
+            <thead><tr><th>Skenario</th><th>Yang diukur</th><th class="num">Per pasangan</th><th class="num">Total</th></tr></thead>
             <tbody>
-              {#each report.criteria as c}<tr><td><strong>{c.label}</strong></td><td>{c.detail}</td></tr>{/each}
+              {#each analysis.scenarios as sc}
+                <tr><td><strong>{sc.name}</strong></td><td>{SCENARIO_PURPOSE[sc.name] ?? '—'}</td><td class="num">{sc.perPair}</td><td class="num">{sc.total.toLocaleString('id-ID')}</td></tr>
+              {/each}
             </tbody>
           </table>
         </div>
+        <div class="rb-scroll" style="margin-top:10px">
+          <table class="rb-table">
+            <thead><tr><th>Kriteria lulus</th><th>Ambang, ditetapkan sebelum uji</th></tr></thead>
+            <tbody>{#each report.criteria as c}<tr><td><strong>{c.label}</strong></td><td>{c.detail}</td></tr>{/each}</tbody>
+          </table>
+        </div>
+        <ul class="plain notes">{#each METHOD_NOTES as n}<li>{n}</li>{/each}</ul>
       </section>
 
       <section class="section-block" id="papan-nilai">
@@ -277,19 +259,6 @@
               {/each}
             </tbody>
           </table>
-        </div>
-      </section>
-
-      <section class="section-block" id="koreksi">
-        <div class="section-heading"><div><p>KOREKSI</p><h2>Masalah yang ditemukan saat menyusun uji</h2></div><span>Dicatat karena mengubah hasilnya</span></div>
-        <div class="corrections">
-          {#each CORRECTIONS as c}
-            <article>
-              <p class="problem">{c.problem}</p>
-              <p class="impact"><span>Akibatnya bila dibiarkan</span>{c.impact}</p>
-              <p class="fix"><span>Yang dilakukan</span>{c.fix}</p>
-            </article>
-          {/each}
         </div>
       </section>
 
@@ -395,27 +364,12 @@
   .toc a { padding: 5px 10px; border-radius: 999px; color: #72796f; font-size: 11px; text-decoration: none; }
   .toc a:hover { background: #e8ebe3; color: #20241f; }
 
-  .prose { max-width: 760px; color: #4c5349; font-size: 13.5px; line-height: 1.75; }
-  .prose p { margin: 0 0 12px; }
-  .prose .question { padding: 14px 16px; border-left: 3px solid #8fbd34; border-radius: 0 10px 10px 0; background: #f2f5ec; color: #2d3329; font-size: 15px; font-weight: 600; line-height: 1.6; }
-
-  .steps { margin: 0; padding: 0; list-style: none; display: grid; gap: 10px; counter-reset: step; }
-  .steps li { display: grid; grid-template-columns: 34px 1fr; gap: 14px; padding: 16px; border: 1px solid #dfe3da; border-radius: 12px; background: #fff; }
-  .steps .no { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 9px; background: #eef5e3; color: #4b6d0a; font-family: 'DM Mono', monospace; font-size: 12px; }
-  .steps h3 { margin: 4px 0 7px; font-size: 14px; letter-spacing: -.015em; }
-  .steps p { margin: 0; color: #4c5349; font-size: 13px; line-height: 1.7; }
-  .steps .evidence { margin-top: 8px; padding-top: 8px; border-top: 1px dashed #e2e6dd; color: #6c7468; font-size: 12px; }
-
-  .corrections { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 10px; }
-  .corrections article { padding: 15px; border: 1px solid #dfe3da; border-left: 3px solid #eda100; border-radius: 11px; background: #fff; }
-  .corrections p { margin: 0; font-size: 12.5px; line-height: 1.65; }
-  .corrections .problem { color: #2d3329; font-weight: 600; }
-  .corrections .impact, .corrections .fix { margin-top: 10px; color: #4c5349; }
-  .corrections span { display: block; margin-bottom: 2px; color: #969d92; font-family: 'DM Mono', monospace; font-size: 9px; text-transform: uppercase; letter-spacing: .08em; }
+  .purpose { max-width: 760px; margin: 0 0 14px; padding: 13px 15px; border-left: 3px solid #8fbd34; border-radius: 0 10px 10px 0; background: #f2f5ec; color: #2d3329; font-size: 13.5px; line-height: 1.65; }
 
   .plain { margin: 0; padding: 18px 18px 18px 36px; border: 1px solid #dfe3da; border-radius: 12px; background: #fff; color: #4c5349; font-size: 13px; line-height: 1.7; }
   .plain li + li { margin-top: 9px; }
-  .plain.limits { background: #f7f8f4; }
+  .plain.limits, .plain.notes { background: #f7f8f4; }
+  .plain.notes { margin-top: 10px; font-size: 12.5px; }
 
   .filters { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 10px; }
   .filters label { display: inline-flex; align-items: center; gap: 7px; color: #72796f; font-size: 11px; }
