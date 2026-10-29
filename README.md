@@ -28,15 +28,25 @@ Secret produksi disimpan di Doppler (project `solarchat`, config `prd`), bukan d
 
 Pengembangan lokal tetap memakai `.env`.
 
-## Laporan POC Tokenku
+## Perbandingan supplier Tokenku
 
-Jalankan suite benchmark terkontrol dengan:
+Tokenku menyalurkan model lewat beberapa supplier (grup) dengan harga dan kecepatan berbeda. Supplier **menempel pada kunci API**: tidak bisa dipilih lewat header, field body, maupun akhiran nama model. Jadi satu kunci per supplier.
 
 ```bash
-bun run poc
+bun scripts/poc/run.ts --session=S1            # sesi penuh
+bun scripts/poc/run.ts --session=S1 --scenarios=akurasi   # ulangi satu skenario saja
 ```
 
-Hasil lengkap disimpan di `POC_REPORT_FILE` (default `./data/poc-report.json`) dan dapat dilihat melalui halaman `/poc` setelah login. Runner menguji compatibility, streaming latency, long context, tool calling, multimodal, high-token output, concurrency bertahap, sustained load, burst, dan timeout. Guardrail menghentikan kenaikan concurrency jika error tahap sebelumnya melebihi 10%.
+Kunci dibaca dari `TOKENKU_KEY_<SUPPLIER>` (`TOKENKU_KEY_CHINALLM`, `TOKENKU_KEY_ENTERPRISE`, dan seterusnya) atau dari berkas lewat `--keys=`. Hasil ditulis ke `data/poc-suppliers.json`; sesi berikutnya digabungkan, bukan menimpa. Halaman `/poc` menyajikannya sebagai keputusan, papan nilai lulus/gagal, grafik perbandingan, dan sampel mentah yang bisa diunduh CSV.
+
+Yang diuji per pasangan model-supplier: latensi, beban bersamaan, akurasi pada soal berjawaban pasti, kepatuhan format blok chart, jawaban panjang, dan konteks 20 ribu token dengan fakta tertanam. Kriteria lulus ditetapkan di `scripts/poc/config.ts` sebelum uji dijalankan.
+
+Dua hal yang membuat angkanya bisa dipercaya:
+
+- **Harga diukur, bukan dibaca dari tabel.** Daftar harga Tokenku terbukti keliru untuk sebagian model, jadi runner mengukur tarif tiap model dari tagihan sungguhan sebelum uji dimulai.
+- **Kegagalan penguji dipisahkan.** Soket yang putus karena terlalu banyak stream dari satu komputer dicoba ulang dan tidak dihitung sebagai kegagalan supplier. Batasi dengan `POC_MAX_INFLIGHT` (default 8).
+
+Laporan POC lama (satu endpoint, tanpa pembanding) tetap tersimpan di `data/poc-report.json` dan dapat dibuat ulang dengan `bun run poc`.
 
 ## Context compaction
 

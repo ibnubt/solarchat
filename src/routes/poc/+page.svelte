@@ -1,186 +1,353 @@
 <script lang="ts">
   import ArrowLeft from 'lucide-svelte/icons/arrow-left';
-  import CheckCircle2 from 'lucide-svelte/icons/circle-check-big';
-  import ChevronLeft from 'lucide-svelte/icons/chevron-left';
-  import ChevronRight from 'lucide-svelte/icons/chevron-right';
-  import Clock3 from 'lucide-svelte/icons/clock-3';
+  import Check from 'lucide-svelte/icons/check';
   import Download from 'lucide-svelte/icons/download';
   import Gauge from 'lucide-svelte/icons/gauge';
-  import Layers3 from 'lucide-svelte/icons/layers-3';
-  import ShieldAlert from 'lucide-svelte/icons/shield-alert';
-  import PocCharts from '$lib/PocCharts.svelte';
-  import type { PocReport, PocSample, PocStatus } from '$lib/poc/types';
+  import Minus from 'lucide-svelte/icons/minus';
+  import X from 'lucide-svelte/icons/x';
+  import ChartBlock from '$lib/markdown/ChartBlock.svelte';
+  import type { ChartSpec } from '$lib/markdown/chart';
+  import { CHAT_PROFILE, USD_TO_IDR, type PairMetrics, type Sample, type SupplierReport } from '$lib/poc/suppliers';
+  import '$lib/markdown/blocks.css';
 
-  let { data }: { data: { report: PocReport | null } } = $props();
-  let selectedModel = $state('all');
-  let selectedStatus = $state('all');
-  let currentPage = $state(1);
-  let pageSize = $state(25);
+  type Analysis = {
+    findings: Array<{ tone: 'baik' | 'perhatian' | 'risiko'; text: string }>;
+    pairs: PairMetrics[];
+    models: string[];
+    chains: Array<{ model: string; chain: string[]; primary: PairMetrics; alternatives: number; savingPercent: number }>;
+    totals: { requests: number; sessions: number; costUsd: number; transportFailures: number };
+  };
+
+  let { data }: { data: { report: SupplierReport | null; analysis: Analysis | null } } = $props();
   const report = $derived(data.report);
-  const filteredSamples = $derived(
-    report?.samples.filter((sample) =>
-      (selectedModel === 'all' || sample.model === selectedModel) &&
-      (selectedStatus === 'all' || sample.status === selectedStatus)
-    ) || []
-  );
-  const totalPages = $derived(Math.max(1, Math.ceil(filteredSamples.length / pageSize)));
-  const paginatedSamples = $derived(filteredSamples.slice((currentPage - 1) * pageSize, currentPage * pageSize));
-  const pageStart = $derived(filteredSamples.length ? (currentPage - 1) * pageSize + 1 : 0);
-  const pageEnd = $derived(Math.min(currentPage * pageSize, filteredSamples.length));
+  const analysis = $derived(data.analysis);
 
-  const number = (value: number | null, suffix = '') => value === null ? '—' : `${Math.round(value).toLocaleString('id-ID')}${suffix}`;
-  const percent = (value: number) => `${value.toLocaleString('id-ID', { maximumFractionDigits: 1 })}%`;
-  const date = (value: string) => new Intl.DateTimeFormat('id-ID', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
-  const label: Record<PocStatus | 'partial', string> = { success: 'Lulus', failed: 'Gagal', unsupported: 'Tidak didukung', skipped: 'Dilewati', partial: 'Parsial' };
+  let scenarioFilter = $state('all');
+  let pairFilter = $state('all');
+  let onlyFailed = $state(false);
+  let shown = $state(40);
 
-  function changeFilter(kind: 'model' | 'status', event: Event) {
-    const value = (event.currentTarget as HTMLSelectElement).value;
-    if (kind === 'model') selectedModel = value;
-    else selectedStatus = value;
-    currentPage = 1;
+  const num = (v: number | null, digits = 0) =>
+    v === null || v === undefined ? '—' : v.toLocaleString('id-ID', { maximumFractionDigits: digits });
+  const ms = (v: number | null) => (v === null ? '—' : v >= 1000 ? `${(v / 1000).toLocaleString('id-ID', { maximumFractionDigits: 1 })} dtk` : `${v} ms`);
+  const pct = (v: number | null) => (v === null ? '—' : `${(v * 100).toLocaleString('id-ID', { maximumFractionDigits: 1 })}%`);
+  const rupiah = (usd: number | null) => (usd === null ? '—' : `Rp ${Math.round(usd * USD_TO_IDR).toLocaleString('id-ID')}`);
+  const short = (model: string) => model.replace(/-260428$/, '').replace('doubao-seed-', 'doubao-');
+
+  const suppliers = $derived([...new Set(analysis?.pairs.map((p) => p.supplier) ?? [])].sort());
+
+  /** Satu seri per supplier, satu kategori per model: perbandingan dibaca mendatar. */
+  function bySupplier(title: string, pick: (p: PairMetrics) => number | null, yLabel: string, unit = ''): ChartSpec {
+    const models = analysis?.models ?? [];
+    return {
+      type: 'bar', title, labels: models.map(short), xLabel: 'Model', yLabel, unit,
+      series: suppliers.map((supplier) => ({
+        name: supplier,
+        data: models.map((model) => {
+          const pair = analysis?.pairs.find((p) => p.model === model && p.supplier === supplier);
+          return pair ? pick(pair) : null;
+        })
+      }))
+    };
   }
 
-  function changePageSize(event: Event) {
-    pageSize = Number((event.currentTarget as HTMLSelectElement).value);
-    currentPage = 1;
-  }
+  const ttftChart = $derived(bySupplier('Waktu sampai token pertama (p95)', (p) => (p.ttftAnyP95 === null ? null : Math.round(p.ttftAnyP95 / 100) / 10), 'detik', 'dtk'));
+  const speedChart = $derived(bySupplier('Kecepatan menulis jawaban (median)', (p) => p.tokensPerSecond, 'token/detik', 'tok/dtk'));
+  const costChart = $derived(bySupplier(`Biaya 1.000 percakapan`, (p) => (p.costPer1000ChatsUsd === null ? null : Math.round(p.costPer1000ChatsUsd * USD_TO_IDR)), 'rupiah', 'Rp'));
 
-  function goToPage(page: number) {
-    currentPage = Math.min(Math.max(page, 1), totalPages);
-  }
+  const samples = $derived(report?.samples ?? []);
+  const filtered = $derived(samples.filter((s) =>
+    (scenarioFilter === 'all' || s.scenario === scenarioFilter) &&
+    (pairFilter === 'all' || `${s.model}::${s.supplier}` === pairFilter) &&
+    (!onlyFailed || !s.ok)
+  ));
+  const scenarios = $derived([...new Set(samples.map((s) => s.scenario))].sort());
 
-  function downloadReport() {
-    if (!report) return;
+  function downloadCsv() {
+    const head = ['sesi', 'model', 'supplier', 'skenario', 'indeks', 'berhasil', 'status', 'jenis_gagal', 'ttft_any_ms', 'ttft_isi_ms', 'latensi_ms', 'token_masuk', 'token_keluar', 'token_nalar', 'alasan_selesai', 'benar', 'chart_valid', 'fakta_ketemu', 'terpotong', 'error'];
+    const line = (s: Sample) => [s.session, s.model, s.supplier, s.scenario, s.index, s.ok ? 1 : 0, s.status, s.failureKind ?? '', s.ttftAnyMs ?? '', s.ttftMs ?? '', s.latencyMs, s.inputTokens, s.outputTokens, s.reasoningTokens, s.finishReason, s.correct === undefined ? '' : s.correct ? 1 : 0, s.chartValid === undefined ? '' : s.chartValid ? 1 : 0, s.factFound === undefined ? '' : s.factFound ? 1 : 0, s.truncated ? 1 : 0, (s.error ?? '').replace(/[",\n]/g, ' ')]
+      .map((v) => (/[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v))).join(',');
+    const blob = new Blob(['﻿', [head.join(','), ...filtered.map(line)].join('\n')], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.href = URL.createObjectURL(new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' }));
-    link.download = `${report.runId}.json`;
+    link.href = url;
+    link.download = 'poc-supplier-sampel.csv';
     link.click();
-    URL.revokeObjectURL(link.href);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 </script>
 
 <svelte:head>
-  <title>Laporan POC Tokenku — SOLAR Chat</title>
-  <meta name="description" content="Laporan benchmark model dan stabilitas API Tokenku." />
+  <title>Perbandingan Supplier Tokenku — SOLAR Chat</title>
+  <meta name="description" content="Uji perbandingan supplier Tokenku: keandalan, kecepatan, akurasi, dan biaya terukur." />
 </svelte:head>
 
 <main class="report-shell">
   <header class="report-nav">
     <a href="/" class="back"><ArrowLeft size={16} /> Kembali ke chat</a>
-    <div class="brand-mini">SOLAR <small>POC TOKENKU</small></div>
-    {#if report}<button onclick={downloadReport}><Download size={15} /> Unduh JSON</button>{/if}
+    <div class="brand-mini">SOLAR <small>PERBANDINGAN SUPPLIER</small></div>
+    {#if report}<button onclick={downloadCsv}><Download size={15} /> Unduh CSV</button>{/if}
   </header>
 
-  {#if !report}
+  {#if !analysis || !report}
     <section class="empty-report">
       <Gauge size={34} />
-      <h1>Report belum tersedia</h1>
-      <p>Jalankan benchmark POC untuk menghasilkan laporan terukur di halaman ini.</p>
+      <h1>Laporan belum ada</h1>
+      <p>Jalankan <code>bun scripts/poc/run.ts --session=S1</code> untuk menghasilkan laporan di halaman ini.</p>
     </section>
   {:else}
     <div class="report-content">
-      <section class="report-hero">
-        <div>
-          <p class="kicker">LAPORAN POC TOKENKU · EXECUTIVE REPORT</p>
-          <h1>Performance that can be <em>defended.</em></h1>
-          <p class="hero-copy">Pengujian kompatibilitas, latency, token throughput, long context dan ketahanan beban melalui endpoint aggregator yang sama.</p>
-        </div>
-        <div class="run-stamp">
-          <span class="live"><i></i> RUN SELESAI</span>
-          <strong>{report.runId}</strong>
-          <small>{date(report.completedAt)}</small>
-          <small>{report.profile}</small>
-        </div>
-      </section>
+      <section class="decision">
+        <p class="kicker">KEPUTUSAN</p>
+        <h1>Supplier mana yang dipakai, dan apa cadangannya.</h1>
+        <p class="lede">
+          {analysis.totals.requests.toLocaleString('id-ID')} permintaan nyata ke {analysis.pairs.length} pasangan model-supplier,
+          biaya uji ${analysis.totals.costUsd.toFixed(2)}. Urutan disusun dengan mendahulukan yang lolos seluruh kriteria,
+          lalu yang termurah.
+        </p>
 
-      <section class="metric-grid">
-        <article><span><Layers3 size={15} /> Total request</span><strong>{report.samples.length}</strong><small>{report.targetModels.length} target model</small></article>
-        <article><span><CheckCircle2 size={15} /> Successful</span><strong>{report.samples.filter((item) => item.status === 'success').length}</strong><small>Request selesai normal</small></article>
-        <article><span><Clock3 size={15} /> Median TTFT terbaik</span><strong>{number(Math.min(...report.aggregates.map((item) => item.medianTtftMs ?? Infinity).filter(Number.isFinite)), ' ms')}</strong><small>Content delta pertama</small></article>
-        <article><span><ShieldAlert size={15} /> Rate limit</span><strong>{report.aggregates.reduce((sum, item) => sum + item.rateLimitOccurrences, 0)}</strong><small>HTTP 429 teramati</small></article>
-      </section>
-
-      <section class="section-block">
-        <div class="section-heading"><div><p>MODEL SCORECARD</p><h2>Ringkasan per model</h2></div><span>Token aktual dari API usage bila tersedia</span></div>
-        <div class="model-grid">
-          {#each report.aggregates as item}
-            <article class:unavailable={item.unsupported > 0 && item.successful === 0} class="model-card">
-              <div class="model-title"><div><span>{item.model.includes('deepseek') ? 'DS' : 'GPT'}</span><div><h3>{item.model}</h3><small>{item.successful ? 'Benchmark completed' : 'Model unavailable'}</small></div></div><b>{percent(item.successRate)}</b></div>
+        <div class="decision-grid">
+          {#each analysis.chains as item}
+            <article>
+              <header><h3>{short(item.model)}</h3>{#if item.savingPercent > 0}<span class="save">hemat {item.savingPercent}%</span>{/if}</header>
+              <p class="choice"><strong>{item.primary.supplier}</strong></p>
+              {#if item.alternatives > 0}
+                <p class="fallback">cadangan: {item.chain.slice(1).join(' → ')}</p>
+              {:else}
+                <p class="fallback warn">tidak ada cadangan — hanya satu supplier</p>
+              {/if}
+              {#if item.primary.failedCriteria.length}
+                <p class="fallback warn">belum memenuhi: {item.primary.failedCriteria.map((id) => report.criteria.find((c) => c.id === id)?.label ?? id).join(', ')}</p>
+              {/if}
               <dl>
-                <div><dt>P50 latency</dt><dd>{number(item.p50LatencyMs, ' ms')}</dd></div>
-                <div><dt>P95 latency</dt><dd>{number(item.p95LatencyMs, ' ms')}</dd></div>
-                <div><dt>Median TTFT</dt><dd>{number(item.medianTtftMs, ' ms')}</dd></div>
-                <div><dt>Output speed</dt><dd>{number(item.medianOutputTokensPerSecond, ' tok/s')}</dd></div>
-                <div><dt>Max context sukses</dt><dd>{number(item.maxSuccessfulInputTokens, ' tok')}</dd></div>
-                <div><dt>Max concurrency</dt><dd>{item.maxSuccessfulConcurrency || '—'}</dd></div>
+                <div><dt>Keandalan</dt><dd>{pct(item.primary.reliability)}</dd></div>
+                <div><dt>Token pertama p95</dt><dd>{ms(item.primary.ttftAnyP95)}</dd></div>
+                <div><dt>Biaya 1.000 chat</dt><dd>{rupiah(item.primary.costPer1000ChatsUsd)}</dd></div>
               </dl>
-              <div class="model-foot"><span>{item.successful} sukses</span><span>{item.failed} gagal</span><span>{item.unsupported} unsupported</span></div>
             </article>
           {/each}
         </div>
       </section>
 
-      <PocCharts {report} />
-
-      <section class="section-block findings-grid">
-        <article class="finding-card"><p>KEY FINDINGS</p><h2>Temuan utama</h2><ul>{#each report.findings as finding}<li><CheckCircle2 size={15} /> <span>{finding}</span></li>{/each}</ul></article>
-        <article class="finding-card limitation"><p>INTERPRETATION NOTES</p><h2>Batasan laporan</h2><ul>{#each report.limitations as limitation}<li><ShieldAlert size={15} /> <span>{limitation}</span></li>{/each}</ul></article>
-      </section>
-
       <section class="section-block">
-        <div class="section-heading"><div><p>COMPATIBILITY MATRIX</p><h2>Hasil 18 use case</h2></div><span>Status dihitung dari bukti request tersimpan</span></div>
-        <div class="usecase-table">
-          {#each report.useCases as item}
-            <article><span>{item.id}</span><div><strong>{item.name}</strong><small>{item.summary}</small></div><b class:success={item.status === 'success'} class:failed={item.status === 'failed'} class:partial={item.status === 'partial'}>{label[item.status]}</b></article>
+        <div class="section-heading"><div><p>TEMUAN</p><h2>Yang perlu ditindaklanjuti</h2></div><span>Disusun dari angka, bukan ditulis tangan</span></div>
+        <ul class="findings">
+          {#each analysis.findings as f}
+            <li class={f.tone}><span>{f.tone}</span><p>{f.text}</p></li>
           {/each}
-        </div>
+        </ul>
       </section>
 
       <section class="section-block">
-        <div class="section-heading detail-head"><div><p>REQUEST EVIDENCE</p><h2>Detail pengujian</h2></div><div class="filters"><select value={selectedModel} onchange={(event) => changeFilter('model', event)} aria-label="Filter model"><option value="all">Semua model</option>{#each report.targetModels as model}<option value={model}>{model}</option>{/each}</select><select value={selectedStatus} onchange={(event) => changeFilter('status', event)} aria-label="Filter status"><option value="all">Semua status</option><option value="success">Lulus</option><option value="failed">Gagal</option><option value="unsupported">Tidak didukung</option><option value="skipped">Dilewati</option></select></div></div>
-        <div class="sample-table-wrap">
-          <table>
-            <thead><tr><th>Use case</th><th>Model / scenario</th><th>Status</th><th>TTFT</th><th>Latency</th><th>Token in/out</th><th>Tok/s</th><th>HTTP</th></tr></thead>
-            <tbody>{#each paginatedSamples as sample}<tr><td>{sample.useCase}</td><td><strong>{sample.model}</strong><small>{sample.scenario}{sample.error ? ` · ${sample.error}` : ''}</small></td><td><span class="sample-status {sample.status}">{label[sample.status]}</span></td><td>{number(sample.ttftMs, ' ms')}</td><td>{number(sample.latencyMs, ' ms')}</td><td>{number(sample.inputTokens)} / {number(sample.outputTokens)}</td><td>{number(sample.outputTokensPerSecond)}</td><td>{sample.httpStatus || '—'}</td></tr>{/each}</tbody>
+        <div class="section-heading">
+          <div><p>PAPAN NILAI</p><h2>Lulus atau gagal terhadap kriteria</h2></div>
+          <span>Kriteria ditetapkan sebelum uji dijalankan</span>
+        </div>
+        <div class="rb-scroll scorecard">
+          <table class="rb-table">
+            <thead>
+              <tr>
+                <th>Model</th><th>Supplier</th>
+                {#each report.criteria as c}<th class="tilt" title={c.detail}>{c.label}</th>{/each}
+                <th class="num">Nilai</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each analysis.pairs as pair}
+                <tr>
+                  <td>{short(pair.model)}</td>
+                  <td>{pair.supplier}</td>
+                  {#each report.criteria as c}
+                    <td class="mark">
+                      {#if pair.verdicts[c.id] === 'lulus'}<i class="pass" title="lulus"><Check size={14} /></i>
+                      {:else if pair.verdicts[c.id] === 'gagal'}<i class="fail" title="gagal"><X size={14} /></i>
+                      {:else}<i class="skip" title="tidak diuji"><Minus size={13} /></i>{/if}
+                    </td>
+                  {/each}
+                  <td class="num"><b>{pair.passed}</b>/{report.criteria.length}</td>
+                </tr>
+              {/each}
+            </tbody>
           </table>
         </div>
-        <div class="pagination" aria-label="Navigasi halaman hasil pengujian">
-          <span>Menampilkan {pageStart}–{pageEnd} dari {filteredSamples.length} hasil</span>
-          <div class="pagination-controls">
-            <label>Baris <select value={pageSize} onchange={changePageSize} aria-label="Jumlah baris per halaman"><option value={10}>10</option><option value={25}>25</option><option value={50}>50</option><option value={100}>100</option></select></label>
-            <button onclick={() => goToPage(currentPage - 1)} disabled={currentPage === 1} aria-label="Halaman sebelumnya"><ChevronLeft size={15} /></button>
-            <span>Halaman <strong>{currentPage}</strong> dari {totalPages}</span>
-            <button onclick={() => goToPage(currentPage + 1)} disabled={currentPage === totalPages} aria-label="Halaman berikutnya"><ChevronRight size={15} /></button>
-          </div>
+      </section>
+
+      <section class="section-block">
+        <div class="section-heading"><div><p>ANGKA</p><h2>Perbandingan antar supplier</h2></div><span>Model yang sama diadu pada supplier berbeda</span></div>
+        <div class="chart-stack">
+          <ChartBlock spec={ttftChart} />
+          <ChartBlock spec={speedChart} />
+          <ChartBlock spec={costChart} />
+        </div>
+        <p class="note">
+          Biaya dihitung dari tarif yang diukur langsung dari tagihan Tokenku, dikali pengali harga tiap supplier,
+          untuk percakapan khas {CHAT_PROFILE.inputTokens.toLocaleString('id-ID')} token masuk dan
+          {CHAT_PROFILE.outputTokens.toLocaleString('id-ID')} token keluar. Kurs Rp {USD_TO_IDR.toLocaleString('id-ID')} per dolar.
+        </p>
+      </section>
+
+      <section class="section-block">
+        <div class="section-heading"><div><p>RINCIAN</p><h2>Angka per pasangan</h2></div><span>{analysis.pairs.length} pasangan</span></div>
+        <div class="rb-scroll">
+          <table class="rb-table">
+            <thead>
+              <tr>
+                <th>Model</th><th>Supplier</th><th class="num">Request</th><th class="num">Keandalan</th>
+                <th class="num">Token pertama p50</th><th class="num">p95</th>
+                <th class="num">Teks pertama p95</th><th class="num">tok/dtk</th>
+                <th class="num">Akurasi</th><th class="num">Format</th><th class="num">Konteks 20k</th>
+                <th class="num">Rp / 1.000 chat</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each analysis.pairs as p}
+                <tr>
+                  <td>{short(p.model)}</td><td>{p.supplier}</td>
+                  <td class="num">{p.requests}</td>
+                  <td class="num" class:bad={p.upstreamFailures > 0}>{pct(p.reliability)}</td>
+                  <td class="num">{ms(p.ttftAnyP50)}</td>
+                  <td class="num">{ms(p.ttftAnyP95)}</td>
+                  <td class="num">{ms(p.ttftContentP95)}</td>
+                  <td class="num">{num(p.tokensPerSecond, 1)}</td>
+                  <td class="num">{pct(p.accuracy)}</td>
+                  <td class="num">{pct(p.chartValid)}</td>
+                  <td class="num">{pct(p.factFound)}</td>
+                  <td class="num">{rupiah(p.costPer1000ChatsUsd)}</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
         </div>
       </section>
 
-      <footer class="methodology"><strong>Metodologi</strong><span>{report.methodology.timing}</span><span>{report.methodology.tokenSource}</span><span>{report.methodology.percentileNote}</span><span>{report.methodology.guardrails}</span></footer>
+      <section class="section-block">
+        <div class="section-heading"><div><p>METODE</p><h2>Cara uji dan batasannya</h2></div></div>
+        <div class="method">
+          <ul>
+            {#each report.criteria as c}<li><strong>{c.label}.</strong> {c.detail}</li>{/each}
+          </ul>
+          <ul class="limits">
+            <li>Harga tiap model diukur dari tagihan sungguhan sebelum uji, karena daftar harga Tokenku terbukti keliru untuk sebagian model.</li>
+            <li>Kegagalan jaringan di sisi penguji ({analysis.totals.transportFailures} kejadian) dikeluarkan dari angka keandalan; hanya penolakan dari Tokenku yang dihitung.</li>
+            <li>Uji latensi dijalankan berurutan per model dengan supplier paralel, supaya antrean penguji tidak terhitung sebagai kelambatan supplier.</li>
+            <li>Model pada uji ini adalah model penalar: sebagian besar token dipakai menalar sebelum teks jawaban muncul, sehingga dibedakan antara token pertama dan teks pertama.</li>
+            <li>Seluruh angka berasal dari {analysis.totals.sessions} sesi pada satu rentang waktu; perbedaan jam sibuk belum tercakup.</li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="section-block">
+        <div class="section-heading"><div><p>LAMPIRAN</p><h2>Sampel mentah</h2></div><span>{filtered.length.toLocaleString('id-ID')} dari {samples.length.toLocaleString('id-ID')} baris</span></div>
+        <div class="filters">
+          <label>Skenario<select bind:value={scenarioFilter}><option value="all">semua</option>{#each scenarios as s}<option value={s}>{s}</option>{/each}</select></label>
+          <label>Pasangan<select bind:value={pairFilter}><option value="all">semua</option>{#each analysis.pairs as p}<option value={`${p.model}::${p.supplier}`}>{short(p.model)} · {p.supplier}</option>{/each}</select></label>
+          <label class="check"><input type="checkbox" bind:checked={onlyFailed} /> hanya yang gagal</label>
+        </div>
+        <div class="rb-scroll">
+          <table class="rb-table">
+            <thead><tr><th>Model</th><th>Supplier</th><th>Skenario</th><th class="num">Token pertama</th><th class="num">Lama</th><th class="num">Token keluar</th><th>Hasil</th><th>Catatan</th></tr></thead>
+            <tbody>
+              {#each filtered.slice(0, shown) as s}
+                <tr>
+                  <td>{short(s.model)}</td><td>{s.supplier}</td><td>{s.scenario}</td>
+                  <td class="num">{ms(s.ttftAnyMs)}</td>
+                  <td class="num">{ms(s.latencyMs)}</td>
+                  <td class="num">{s.outputTokens}{#if s.reasoningTokens}<small> ({s.reasoningTokens} nalar)</small>{/if}</td>
+                  <td>{#if s.ok}<span class="tag ok">berhasil</span>{:else}<span class="tag bad">{s.failureKind === 'transport' ? 'jaringan penguji' : 'ditolak'}</span>{/if}</td>
+                  <td class="note-cell">{s.error ?? s.answerPreview ?? ''}</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+        {#if filtered.length > shown}
+          <button class="more" onclick={() => (shown += 100)}>Tampilkan 100 baris lagi</button>
+        {/if}
+      </section>
     </div>
   {/if}
 </main>
 
 <style>
-  :global(body) { overflow: hidden; }
-  .report-shell { height: 100vh; overflow-y: auto; color: #20241f; background-color: #f7f8f3; background-image: linear-gradient(rgba(47,61,41,.035) 1px, transparent 1px), linear-gradient(90deg, rgba(47,61,41,.035) 1px, transparent 1px); background-size: 40px 40px; }
-  .report-nav { position: sticky; top: 0; z-index: 10; height: 66px; padding: 0 max(22px, calc((100% - 1180px) / 2)); display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; border-bottom: 1px solid #dfe2d9; background: rgba(247,248,243,.92); backdrop-filter: blur(16px); }
-  .back, .report-nav button { display: flex; align-items: center; gap: 7px; color: #646c61; text-decoration: none; font-size: 11px; }
-  .report-nav button { justify-self: end; padding: 8px 11px; border: 1px solid #d5dacf; border-radius: 9px; background: #fff; cursor: pointer; }
-  .brand-mini { font-size: 16px; font-weight: 700; letter-spacing: -.04em; }.brand-mini small { margin-left: 7px; color: #6f9f12; font-family: 'DM Mono', monospace; font-size: 8px; letter-spacing: .12em; }
-  .report-content { width: min(1180px, calc(100% - 44px)); margin: 0 auto; padding: 62px 0 80px; }
-  .report-hero { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 50px; align-items: end; }
-  .kicker, .section-heading p, .finding-card > p { margin: 0 0 12px; color: #76806f; font-family: 'DM Mono', monospace; font-size: 9px; letter-spacing: .14em; }
-  .report-hero h1 { max-width: 760px; margin: 0; font-size: clamp(42px, 6vw, 78px); line-height: .98; letter-spacing: -.065em; font-weight: 600; }.report-hero h1 em { color: #6b9912; font-family: Georgia, serif; font-weight: 400; }
-  .hero-copy { max-width: 700px; margin: 22px 0 0; color: #6e766b; font-size: 13px; line-height: 1.7; }
-  .run-stamp { padding: 19px; display: flex; flex-direction: column; gap: 6px; border: 1px solid #dce0d7; border-radius: 15px; background: #fff; }.run-stamp .live { display: flex; align-items: center; gap: 6px; color: #5f8910; font-family: 'DM Mono', monospace; font-size: 8px; }.run-stamp i { width: 6px; height: 6px; border-radius: 50%; background: #76a91a; }.run-stamp strong { margin-top: 9px; font-family: 'DM Mono', monospace; font-size: 11px; }.run-stamp small { color: #8a9286; font-size: 9px; }
-  .metric-grid { margin-top: 42px; display: grid; grid-template-columns: repeat(4, 1fr); border: 1px solid #dfe2d9; border-radius: 16px; background: #fff; overflow: hidden; }.metric-grid article { min-width: 0; padding: 20px; display: flex; flex-direction: column; }.metric-grid article + article { border-left: 1px solid #e4e7df; }.metric-grid span { display: flex; gap: 7px; align-items: center; color: #7b8378; font-size: 10px; }.metric-grid strong { margin-top: 14px; font-family: 'DM Mono', monospace; font-size: 26px; font-weight: 500; }.metric-grid small { margin-top: 5px; color: #969d93; font-size: 9px; }
-  .section-block { margin-top: 48px; }.section-heading { margin-bottom: 15px; display: flex; justify-content: space-between; align-items: end; gap: 20px; }.section-heading p { margin-bottom: 6px; }.section-heading h2, .finding-card h2 { margin: 0; font-size: 20px; letter-spacing: -.025em; }.section-heading > span { color: #92998f; font-size: 9px; }
-  .model-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }.model-card { padding: 22px; border: 1px solid #dfe2d9; border-radius: 16px; background: #fff; box-shadow: 0 10px 28px rgba(37,49,31,.04); }.model-card.unavailable { background: #f8f5f2; border-color: #e5dcd5; }.model-title, .model-title > div { display: flex; align-items: center; justify-content: space-between; gap: 11px; }.model-title > div > span { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 10px; background: #e6efd5; color: #52790a; font-size: 10px; font-weight: 700; }.unavailable .model-title > div > span { background: #efe5de; color: #a35a45; }.model-title h3 { margin: 0; font-size: 13px; }.model-title small { display: block; margin-top: 3px; color: #92998f; font-size: 8px; }.model-title b { font-family: 'DM Mono', monospace; font-size: 22px; font-weight: 500; }.model-card dl { margin: 22px 0 0; display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid #e5e8e0; border-radius: 11px; overflow: hidden; }.model-card dl div { padding: 12px; display: flex; flex-direction: column; gap: 5px; }.model-card dl div:nth-child(n+4) { border-top: 1px solid #e5e8e0; }.model-card dl div:not(:nth-child(3n+1)) { border-left: 1px solid #e5e8e0; }.model-card dt { color: #8d958a; font-size: 8px; }.model-card dd { margin: 0; font-family: 'DM Mono', monospace; font-size: 11px; }.model-foot { margin-top: 13px; display: flex; gap: 13px; color: #8b9288; font-size: 8px; }
-  .findings-grid { display: grid; grid-template-columns: 1.15fr .85fr; gap: 14px; }.finding-card { padding: 23px; border: 1px solid #dce2d6; border-radius: 16px; background: #f2f6e9; }.finding-card.limitation { background: #fff; border-color: #dfe2d9; }.finding-card ul { margin: 20px 0 0; padding: 0; display: grid; gap: 12px; list-style: none; }.finding-card li { display: flex; align-items: flex-start; gap: 9px; color: #525a4f; font-size: 11px; line-height: 1.55; }.finding-card li :global(svg) { flex: 0 0 auto; margin-top: 1px; color: #648f12; }.finding-card.limitation li :global(svg) { color: #a86b39; }
-  .usecase-table { border: 1px solid #dfe2d9; border-radius: 15px; background: #fff; overflow: hidden; }.usecase-table article { min-height: 66px; padding: 12px 16px; display: grid; grid-template-columns: 54px 1fr auto; gap: 12px; align-items: center; }.usecase-table article + article { border-top: 1px solid #e5e8e0; }.usecase-table article > span { font-family: 'DM Mono', monospace; color: #858d81; font-size: 9px; }.usecase-table strong { display: block; font-size: 11px; }.usecase-table small { display: block; margin-top: 4px; color: #878f84; font-size: 9px; line-height: 1.4; }.usecase-table b { padding: 5px 8px; border-radius: 7px; color: #777f73; background: #edf0e9; font-size: 8px; }.usecase-table b.success { color: #557d0a; background: #eaf3d9; }.usecase-table b.failed { color: #a24a3f; background: #f7e3df; }.usecase-table b.partial { color: #97611e; background: #faefd9; }
-  .detail-head { align-items: center; }.filters { display: flex; gap: 7px; }.filters select { padding: 8px 28px 8px 9px; border: 1px solid #d6dbd1; border-radius: 8px; color: #60685d; background: #fff; font-size: 9px; }.sample-table-wrap { overflow-x: auto; border: 1px solid #dfe2d9; border-radius: 15px; background: #fff; }table { width: 100%; min-width: 940px; border-collapse: collapse; }th { padding: 11px 13px; color: #858d81; background: #f2f4ee; font-family: 'DM Mono', monospace; font-size: 8px; font-weight: 500; text-align: left; }td { padding: 11px 13px; border-top: 1px solid #e7e9e3; color: #555d52; font-family: 'DM Mono', monospace; font-size: 8px; }td strong { display: block; color: #333a31; font-size: 9px; }td small { display: block; max-width: 330px; margin-top: 3px; overflow: hidden; color: #90978d; font-family: 'Manrope', sans-serif; white-space: nowrap; text-overflow: ellipsis; }.sample-status { padding: 4px 6px; border-radius: 5px; background: #edf0e9; }.sample-status.success { color: #557d0a; background: #eaf3d9; }.sample-status.failed, .sample-status.unsupported { color: #a24a3f; background: #f7e3df; }
-  .pagination { min-height: 50px; margin-top: 10px; padding: 10px 12px; display: flex; align-items: center; justify-content: space-between; gap: 18px; border: 1px solid #dfe2d9; border-radius: 12px; background: #fff; color: #81897e; font-family: 'DM Mono', monospace; font-size: 8px; }.pagination-controls, .pagination-controls label { display: flex; align-items: center; gap: 8px; }.pagination select { padding: 6px 22px 6px 7px; border: 1px solid #d9ddd4; border-radius: 7px; color: #555d52; background: #f8f9f5; font-size: 9px; }.pagination button { width: 30px; height: 30px; display: grid; place-items: center; border: 1px solid #d9ddd4; border-radius: 8px; background: #fff; color: #515a4e; cursor: pointer; }.pagination button:hover:not(:disabled) { border-color: #9baa8c; background: #f2f6e9; }.pagination button:disabled { opacity: .38; cursor: default; }.pagination strong { color: #35402f; font-weight: 600; }
-  .methodology { margin-top: 36px; padding: 18px 0; display: flex; flex-wrap: wrap; gap: 10px 20px; border-top: 1px solid #dfe2d9; color: #858d81; font-size: 8px; }.methodology strong { color: #4e564b; }.empty-report { height: calc(100vh - 66px); display: grid; place-content: center; justify-items: center; text-align: center; }.empty-report :global(svg) { color: #6f9f12; }.empty-report h1 { margin: 16px 0 8px; }.empty-report p { color: #7d8579; font-size: 12px; }
-  @media (max-width: 850px) { .report-hero { grid-template-columns: 1fr; }.run-stamp { width: min(100%, 360px); }.metric-grid { grid-template-columns: repeat(2, 1fr); }.metric-grid article:nth-child(3) { border-left: 0; border-top: 1px solid #e4e7df; }.metric-grid article:nth-child(4) { border-top: 1px solid #e4e7df; }.model-grid, .findings-grid { grid-template-columns: 1fr; } }
-  @media (max-width: 560px) { .report-nav { padding: 0 14px; grid-template-columns: 1fr auto; }.brand-mini { display: none; }.report-content { width: calc(100% - 28px); padding-top: 38px; }.report-hero h1 { font-size: 43px; }.metric-grid { grid-template-columns: 1fr 1fr; }.metric-grid article { padding: 15px; }.model-card dl { grid-template-columns: repeat(2, 1fr); }.model-card dl div:nth-child(3) { border-top: 1px solid #e5e8e0; border-left: 0; }.model-card dl div:nth-child(4) { border-left: 1px solid #e5e8e0; }.model-card dl div:nth-child(5) { border-left: 0; }.usecase-table article { grid-template-columns: 42px 1fr; }.usecase-table b { grid-column: 2; justify-self: start; }.section-heading { align-items: flex-start; flex-direction: column; }.detail-head { align-items: stretch; }.filters select { max-width: 50%; }.section-heading > span { display: none; }.pagination { align-items: flex-start; flex-direction: column; }.pagination-controls { width: 100%; justify-content: space-between; }.pagination-controls > span { text-align: center; } }
+  .report-shell { min-height: 100vh; min-height: 100dvh; overflow-y: auto; background: #f9faf6; background-image: linear-gradient(rgba(47,61,41,.035) 1px, transparent 1px), linear-gradient(90deg, rgba(47,61,41,.035) 1px, transparent 1px); background-size: 40px 40px; }
+  .report-nav { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 62px; padding: 0 24px; border-bottom: 1px solid rgba(215,220,210,.9); background: rgba(249,250,246,.94); backdrop-filter: blur(8px); }
+  .report-nav .back, .report-nav button { display: inline-flex; align-items: center; gap: 7px; border: 1px solid #d7dcd2; border-radius: 9px; background: #fff; color: #3f473c; padding: 8px 12px; font-size: 12px; font-weight: 600; text-decoration: none; cursor: pointer; }
+  .report-nav .back:hover, .report-nav button:hover { border-color: #aeb5a8; color: #20241f; }
+  .brand-mini { font-size: 15px; font-weight: 700; letter-spacing: -.03em; }
+  .brand-mini small { margin-left: 5px; color: #628d0d; font-family: 'DM Mono', monospace; font-size: 8px; letter-spacing: .1em; }
+
+  .empty-report { display: grid; place-items: center; gap: 10px; padding: 120px 24px; color: #7b8278; text-align: center; }
+  .empty-report h1 { margin: 0; font-size: 22px; color: #20241f; }
+  .empty-report code { padding: 2px 6px; border-radius: 5px; background: #edf0e8; font-family: 'DM Mono', monospace; font-size: .9em; }
+
+  .report-content { width: min(1120px, calc(100% - 40px)); margin: 0 auto; padding: 34px 0 90px; display: flex; flex-direction: column; gap: 42px; }
+  .kicker { margin: 0 0 10px; color: #858c82; font-family: 'DM Mono', monospace; font-size: 10px; letter-spacing: .12em; }
+  .decision h1 { margin: 0; font-size: clamp(28px, 4vw, 44px); line-height: 1.1; letter-spacing: -.045em; font-weight: 600; }
+  .lede { max-width: 720px; margin: 14px 0 0; color: #5f665c; line-height: 1.65; font-size: 14px; }
+
+  .decision-grid { margin-top: 26px; display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+  .decision-grid article { padding: 16px; border: 1px solid #dfe3da; border-radius: 14px; background: #fff; box-shadow: 0 8px 26px rgba(37,49,31,.045); }
+  .decision-grid header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .decision-grid h3 { margin: 0; font-size: 13px; font-weight: 700; overflow-wrap: anywhere; }
+  .save { flex: 0 0 auto; padding: 3px 7px; border-radius: 6px; background: #e6f0d3; color: #4b6d0a; font-family: 'DM Mono', monospace; font-size: 9px; }
+  .choice { margin: 12px 0 2px; font-size: 20px; letter-spacing: -.02em; }
+  .fallback { margin: 0; color: #7b8278; font-size: 11px; }
+  .fallback.warn { color: #a54139; }
+  .decision-grid dl { margin: 14px 0 0; padding-top: 12px; border-top: 1px solid #edf0e8; display: grid; gap: 7px; }
+  .decision-grid dl div { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+  .decision-grid dt { color: #868d82; font-size: 11px; }
+  .decision-grid dd { margin: 0; font-family: 'DM Mono', monospace; font-size: 12px; color: #252a23; }
+
+  .section-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 14px; margin-bottom: 14px; }
+  .section-heading p { margin: 0 0 4px; color: #969d92; font-family: 'DM Mono', monospace; font-size: 9px; letter-spacing: .12em; }
+  .section-heading h2 { margin: 0; font-size: 19px; letter-spacing: -.03em; }
+  .section-heading span { color: #8a9187; font-size: 11px; text-align: right; }
+
+  .scorecard { border: 1px solid #dce1d7; border-radius: 12px; background: #fff; }
+  .scorecard th.tilt { font-size: 10px; max-width: 72px; white-space: normal; line-height: 1.25; }
+  .mark { text-align: center; }
+  .mark i { display: inline-grid; place-items: center; width: 21px; height: 21px; border-radius: 6px; }
+  .mark .pass { background: #e6f0d3; color: #4b6d0a; }
+  .mark .fail { background: #f7e0dd; color: #a54139; }
+  .mark .skip { background: #eef0e8; color: #9aa196; }
+
+  .findings { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+  .findings li { display: grid; grid-template-columns: 86px 1fr; gap: 12px; align-items: start; padding: 13px 15px; border: 1px solid #dfe3da; border-left-width: 3px; border-radius: 11px; background: #fff; }
+  .findings li.baik { border-left-color: #8fbd34; }
+  .findings li.perhatian { border-left-color: #eda100; }
+  .findings li.risiko { border-left-color: #d1655c; }
+  .findings span { padding: 3px 0; color: #868d82; font-family: 'DM Mono', monospace; font-size: 9px; text-transform: uppercase; letter-spacing: .08em; }
+  .findings li.risiko span { color: #a54139; }
+  .findings p { margin: 0; color: #3f473c; font-size: 13px; line-height: 1.6; }
+
+  .chart-stack { display: grid; gap: 12px; }
+  .note { margin: 12px 0 0; color: #7b8278; font-size: 11px; line-height: 1.6; }
+
+  .method { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
+  .method ul { margin: 0; padding: 16px 16px 16px 32px; border: 1px solid #dfe3da; border-radius: 12px; background: #fff; color: #4c5349; font-size: 12.5px; line-height: 1.65; }
+  .method .limits { background: #f7f8f4; }
+  .method li + li { margin-top: 7px; }
+
+  .filters { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 10px; }
+  .filters label { display: inline-flex; align-items: center; gap: 7px; color: #72796f; font-size: 11px; }
+  .filters select { padding: 7px 9px; border: 1px solid #d7dcd2; border-radius: 8px; background: #fff; font-size: 12px; }
+  .filters .check { gap: 6px; }
+
+  .rb-table td.bad { color: #a54139; font-weight: 600; }
+  .tag { display: inline-block; padding: 2px 7px; border-radius: 999px; font-size: 10px; font-weight: 600; }
+  .tag.ok { background: #e6f0d3; color: #4b6d0a; }
+  .tag.bad { background: #f7e0dd; color: #a54139; }
+  .note-cell { max-width: 320px; color: #72796f; font-size: 11px; }
+  .more { width: 100%; margin-top: 10px; padding: 11px; border: 1px dashed #d2d7cc; border-radius: 10px; background: transparent; color: #5d870d; font-size: 12px; font-weight: 600; cursor: pointer; }
+  .more:hover { background: #f2f6ea; }
+
+  @media (max-width: 680px) {
+    .report-nav { padding: 0 12px; height: 56px; }
+    .brand-mini { display: none; }
+    .report-content { width: calc(100% - 24px); padding-top: 22px; gap: 32px; }
+    .section-heading { flex-direction: column; align-items: flex-start; gap: 4px; }
+    .section-heading span { text-align: left; }
+    .decision-grid { grid-template-columns: 1fr; }
+    .findings li { grid-template-columns: 1fr; gap: 4px; }
+  }
 </style>

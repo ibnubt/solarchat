@@ -7,6 +7,7 @@ build
 .DS_Store
 data/*.json
 !data/poc-report.json
+!data/poc-suppliers.json
 data/*.tmp
 data/uploads/
 deploy.log
