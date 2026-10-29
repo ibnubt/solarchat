@@ -46,6 +46,8 @@
     return [...map.values()].sort((a, b) => b.count - a.count);
   });
 
+  const pendek = $derived(summary?.scenarios.find((x) => x.name === 'akurasi'));
+  const panjang = $derived(summary?.scenarios.find((x) => x.name === 'jawaban-panjang'));
   const supplierNames = $derived([...new Set(summary?.suppliers.map((s) => s.supplier) ?? [])].sort());
   function bySupplier(title: string, pick: (row: { ttftP95: number | null; costShortIdr: number | null }) => number | null, yLabel: string, unit = ''): ChartSpec {
     const models = summary?.models.map((m) => m.model) ?? [];
@@ -133,8 +135,6 @@
       </section>
 
       <section class="section-block" id="harga">
-        {@const pendek = summary.scenarios.find((x) => x.name === 'akurasi')}
-        {@const panjang = summary.scenarios.find((x) => x.name === 'jawaban-panjang')}
         <div class="section-heading"><div><p>HARGA</p><h2>Biaya per 1.000 permintaan</h2></div><span>Token terpakai disamakan per model, jadi selisih antar supplier = pengali harga Tokenku</span></div>
         <p class="sizes">
           <b>Pertanyaan pendek</b>: median {pendek?.contextTokens.toLocaleString('id-ID')} token masuk, {pendek?.outputTokens.toLocaleString('id-ID')} token keluar (soal satu kalimat, jawaban satu angka atau kata).
