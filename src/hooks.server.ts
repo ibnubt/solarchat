@@ -4,9 +4,13 @@ import { SESSION_COOKIE, verifySessionToken } from '$lib/server/auth';
 const publicPaths = ['/login', '/api/auth/login'];
 
 export const handle: Handle = async ({ event, resolve }) => {
-  // Paksa HTTPS: redirect semua request HTTP ke HTTPS
-  const proto = event.request.headers.get('x-forwarded-proto') || event.url.protocol.replace(':', '');
-  if (proto !== 'https') {
+  // Paksa HTTPS: redirect semua request HTTP ke HTTPS.
+  // Akses langsung dari mesin sendiri dikecualikan, jika tidak `bun run dev` selalu dialihkan
+  // ke https://localhost yang tidak ada. Di produksi header x-forwarded-proto selalu dikirim tunnel.
+  const forwarded = event.request.headers.get('x-forwarded-proto');
+  const proto = forwarded || event.url.protocol.replace(':', '');
+  const isLocal = !forwarded && ['localhost', '127.0.0.1', '[::1]', '::1'].includes(event.url.hostname);
+  if (proto !== 'https' && !isLocal) {
     const url = new URL(event.request.url);
     url.protocol = 'https:';
     url.port = '';
