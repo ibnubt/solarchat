@@ -16,7 +16,7 @@ export const METRICS = [
   { id: 'ttft', label: 'Waktu tunggu (TTFT)', how: 'Dari permintaan dikirim sampai token pertama keluar; p50 dan p95. Prompt pendek 43 token.' },
   { id: 'reasoning', label: 'Berpikir', how: 'Pada prompt pendek 43 token: berapa persen token keluaran dipakai model menalar sebelum menulis jawaban, dan berapa median token keluarnya. Token berpikir ikut ditagih. Kolom reasoning_effort: low = prompt yang sama dikirim dengan parameter itu; kalau persen dan jumlah tokennya tidak turun, model mengabaikannya.' },
   { id: 'success', label: 'Berhasil', how: 'Permintaan yang dilayani sampai selesai. Gagal = ditolak Tokenku, putus, atau habis waktu 5 menit. Gangguan jaringan penguji tidak dihitung.' },
-  { id: 'availability', label: 'Probe tiap 2 menit', how: 'Selama 60 menit, tiap 2 menit satu permintaan ringan (38 token) dikirim ke setiap pasangan. 30/30 berarti semua dijawab. Dibuat untuk menangkap error sesaat seperti "Failed to get available channel" yang tidak terlihat pada uji singkat.' },
+  { id: 'availability', label: 'Cek koneksi berkala', how: 'Selama 60 menit, tiap 2 menit satu permintaan ringan (38 token) dikirim ke setiap pasangan. 30/30 berarti semua dijawab. Dibuat untuk menangkap error sesaat seperti "Failed to get available channel" yang tidak terlihat pada uji singkat.' },
   { id: 'cost', label: 'Biaya', how: 'Tarif per token diukur dari tagihan akun (median 3 putaran), dikali token yang terpakai pada uji, dikali pengali harga supplier. Per 1.000 permintaan; ukuran token tiap jenis permintaan tertulis di bagian Harga.' }
 ] as const;
 
@@ -34,7 +34,11 @@ export type ModelRow = {
   chart: { ok: number; total: number };
   longAnswer: { intact: number; total: number };
   context: { found: number; total: number; tokens: number };
+  /** Prompt pendek 43 token: porsi berpikir dan median token keluar; lalu nilai yang sama dengan reasoning_effort: low. */
   reasoningShare: number | null;
+  shortOutTokens: number | null;
+  shortTtftP50: number | null;
+  lowEffort: { ttftP50: number | null; outTokens: number | null; reasoningShare: number | null } | null;
   cheapestSupplier: string;
   costShortIdr: number | null;
   costLongIdr: number | null;
@@ -98,8 +102,10 @@ export function summarise(report: SupplierReport) {
     const chart = rows.filter((s) => s.scenario === 'format-chart');
     const long = rows.filter((s) => s.scenario === 'jawaban-panjang');
     const ctx = rows.filter((s) => s.scenario === 'konteks-panjang');
-    const done = rows.filter((s) => s.ok && s.outputTokens > 0 && s.scenario !== 'tanpa-nalar');
+    const done = latency.filter((s) => s.outputTokens > 0);
     const outTok = done.reduce((a, s) => a + s.outputTokens, 0);
+    const low = rows.filter((s) => s.scenario === 'tanpa-nalar' && s.ok && !s.unsupported);
+    const lowOut = low.reduce((a, s) => a + s.outputTokens, 0);
     const suppliers = [...new Set(rows.map((s) => s.supplier))].sort((a, b) => (ratio[a] ?? 1) - (ratio[b] ?? 1));
     const cheapest = suppliers[0];
 
@@ -157,6 +163,15 @@ export function summarise(report: SupplierReport) {
       longAnswer: { intact: count(long, (s) => s.ok && !s.truncated), total: long.length },
       context: { found: count(ctx, (s) => s.factFound === true), total: ctx.length, tokens: median(ctx.filter((s) => s.inputTokens > 0).map((s) => s.inputTokens)) ?? 0 },
       reasoningShare: outTok ? done.reduce((a, s) => a + s.reasoningTokens, 0) / outTok : null,
+      shortOutTokens: median(done.map((s) => s.outputTokens)),
+      shortTtftP50: median(ttft),
+      lowEffort: low.length
+        ? {
+            ttftP50: median(low.map((s) => s.ttftAnyMs).filter((v): v is number => v !== null)),
+            outTokens: median(low.filter((s) => s.outputTokens > 0).map((s) => s.outputTokens)),
+            reasoningShare: lowOut ? low.reduce((a, s) => a + s.reasoningTokens, 0) / lowOut : null
+          }
+        : null,
       cheapestSupplier: cheapest,
       costShortIdr: costIdr(report, model, cheapest, rows.filter((s) => s.scenario === 'akurasi')),
       costLongIdr: costIdr(report, model, cheapest, rows.filter((s) => s.scenario === 'jawaban-panjang')),

@@ -96,7 +96,7 @@
   {:else}
     <div class="report-content">
       <nav class="toc" aria-label="Daftar isi">
-        <a href="#performa">Performa per supplier</a><a href="#harga">Harga</a><a href="#grafik">Grafik</a><a href="#insiden">Insiden</a><a href="#batasan">Batasan</a><a href="#data">Data mentah</a>
+        <a href="#performa">Performa per supplier</a><a href="#nalar">Berpikir</a><a href="#harga">Harga</a><a href="#grafik">Grafik</a><a href="#insiden">Insiden</a><a href="#batasan">Batasan</a><a href="#data">Data mentah</a>
       </nav>
 
       <section class="section-block" id="performa">
@@ -108,10 +108,9 @@
                 <th>Model</th><th>Supplier</th>
                 <th class="num">TTFT p50</th><th class="num">TTFT p95</th>
                 <th class="num">Token/detik</th>
-                <th class="num">Berpikir<small>prompt pendek · token keluar</small></th>
-                <th class="num">reasoning_effort: low<small>TTFT p50 · berpikir · token keluar</small></th>
+                <th class="num">Berpikir<small>porsi token keluar</small></th>
                 <th class="num">Berhasil</th>
-                <th class="num">Probe tiap 2 mnt<small>60 menit</small></th>
+                <th class="num">Cek koneksi berkala<small>tiap 2 menit, 1 jam</small></th>
               </tr>
             </thead>
             <tbody>
@@ -122,16 +121,37 @@
                   <td>{r.supplier}</td>
                   <td class="num">{sec(r.ttftP50)}</td><td class="num">{sec(r.ttftP95)}</td>
                   <td class="num">{r.tokensPerSecond ?? '—'}</td>
-                  <td class="num">{pct(r.reasoningShare)}<small>{r.shortOutTokens ?? '—'} token</small></td>
-                  <td class="num">{#if !r.noReasoning}—{:else if !r.noReasoning.supported}<small>ditolak (400)</small>{:else}{sec(r.noReasoning.ttftP50)}<small>{pct(r.noReasoning.reasoningShare)} · {r.noReasoning.outTokens ?? '—'} token</small>{/if}</td>
+                  <td class="num">{pct(r.reasoningShare)}</td>
                   <td class="num" class:bad={r.failures > 0}>{pct(r.successRate)}{#if r.failures}<small>{r.failures} dari {r.requests}</small>{/if}</td>
-                  <td class="num" class:bad={r.availability !== null && r.availability.ok < r.availability.total}>{#if r.availability}{r.availability.ok}/{r.availability.total}{:else}—{/if}</td>
+                  <td class="num" class:bad={r.availability !== null && r.availability.ok < r.availability.total}>{#if r.availability}{r.availability.ok} dari {r.availability.total}{:else}—{/if}</td>
                 </tr>
               {/each}
             </tbody>
           </table>
         </div>
         <dl class="defs">{#each METRICS as m}<div><dt>{m.label}</dt><dd>{m.how}</dd></div>{/each}</dl>
+      </section>
+
+      <section class="section-block" id="nalar">
+        <div class="section-heading"><div><p>BERPIKIR</p><h2>Apakah <code>reasoning_effort: low</code> mengurangi berpikir?</h2></div><span>Prompt pendek yang sama (43 token), dikirim tanpa dan dengan parameter itu. Semua supplier digabung.</span></div>
+        <div class="rb-scroll">
+          <table class="rb-table">
+            <thead><tr><th>Model</th><th class="num">Berpikir: normal → low</th><th class="num">Token keluar: normal → low</th><th class="num">TTFT p50: normal → low</th><th>Hasil</th></tr></thead>
+            <tbody>
+              {#each summary.models as m}
+                {@const le = m.lowEffort}
+                {@const cut = le && m.shortOutTokens && le.outTokens !== null ? 1 - le.outTokens / m.shortOutTokens : null}
+                <tr>
+                  <td><strong>{short(m.model)}</strong></td>
+                  <td class="num">{pct(m.reasoningShare)} → {le ? pct(le.reasoningShare) : '—'}</td>
+                  <td class="num">{m.shortOutTokens ?? '—'} → {le?.outTokens ?? '—'}</td>
+                  <td class="num">{sec(m.shortTtftP50)} → {le ? sec(le.ttftP50) : '—'}</td>
+                  <td>{#if !le}tidak diuji{:else if (m.reasoningShare ?? 0) < 0.1}model ini memang tidak berpikir{:else if cut !== null && cut >= 0.3}token keluar turun {Math.round(cut * 100)}%, parameter dihormati{:else}parameter diterima tetapi diabaikan{/if}</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
       </section>
 
       <section class="section-block" id="harga">
@@ -240,6 +260,7 @@
 
   .rb-table td small { display: block; color: #949b90; font-size: 10px; }
   .rb-table th small { display: block; color: #949b90; font-size: 9px; font-weight: 400; text-transform: none; }
+  .section-heading code { padding: 1px 5px; border-radius: 5px; background: #edf0e8; font-family: 'DM Mono', monospace; font-size: .85em; }
   .sizes { margin: 0 0 10px; color: #4c5349; font-size: 12px; line-height: 1.6; }
   .sizes b { color: #20241f; }
   .rb-table tr.group-start td { border-top: 2px solid #dfe3da; }
