@@ -4,9 +4,9 @@ import type { summarise } from './results';
 export function limitations(s: ReturnType<typeof summarise>): string[] {
   return [
     `Diuji ${s.totals.sessions} kali pada satu rentang waktu. Perbedaan jam sibuk dan jam sepi belum terukur.`,
-    'Waktu tunggu p95 dihitung dari 20 sampai 200 sampel per model; cukup untuk membandingkan, belum untuk janji layanan.',
+    'TTFT p95 dihitung dari 20 sampai 200 sampel per model; cukup untuk membandingkan, belum untuk janji layanan.',
     'Beban diuji sampai 16 permintaan serentak.',
-    `Uji chat pendek membatasi keluaran 512 token. Model yang berpikir panjang menghabiskannya sebelum menulis, sehingga ${s.totals.emptyAnswers} jawaban kosong. Aplikasi memakai batas 16.384 token.`,
+    `Uji chat pendek membatasi output 512 token. Model yang reasoning panjang menghabiskannya sebelum menulis, sehingga ${s.totals.emptyAnswers} jawaban kosong. Aplikasi memakai batas 16.384 token.`,
     'Jawaban panjang dinilai selesai atau terpotong, bukan mutu isinya.',
     'Tarif per token diukur dari tagihan akun yang juga dipakai aplikasi, jadi bisa tercampur pemakaian lain. Tiap model diukur 3 putaran; angka ± pada kolom biaya adalah rentang antar putaran.',
     `${s.totals.transportFailures} permintaan gagal karena jaringan komputer penguji dan tidak dihitung sebagai kegagalan supplier.`

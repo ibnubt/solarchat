@@ -238,7 +238,6 @@
 
   .rb-table td small { display: block; color: #949b90; font-size: 10px; }
   .rb-table th small { display: block; color: #949b90; font-size: 9px; font-weight: 400; text-transform: none; }
-  .section-heading code { padding: 1px 5px; border-radius: 5px; background: #edf0e8; font-family: 'DM Mono', monospace; font-size: .85em; }
   .sizes { margin: 0 0 10px; color: #4c5349; font-size: 12px; line-height: 1.6; }
   .sizes b { color: #20241f; }
   .rb-table tr.group-start td { border-top: 2px solid #dfe3da; }

@@ -13,11 +13,11 @@ const median = (v: number[]) => quantile(v, 50);
 
 /** Definisi singkat kolom yang dipakai di halaman. */
 export const METRICS = [
-  { id: 'ttft', label: 'Waktu tunggu (TTFT)', how: 'Dari permintaan dikirim sampai token pertama keluar; p50 dan p95. Prompt pendek 43 token.' },
-  { id: 'reasoning', label: 'Berpikir', how: 'Pada prompt pendek 43 token: berapa persen token keluaran dipakai model menalar sebelum menulis jawaban, dan berapa median token keluarnya. Token berpikir ikut ditagih. Kolom reasoning_effort: low = prompt yang sama dikirim dengan parameter itu; kalau persen dan jumlah tokennya tidak turun, model mengabaikannya.' },
-  { id: 'success', label: 'Berhasil', how: 'Permintaan yang dilayani sampai selesai. Gagal = ditolak Tokenku, putus, atau habis waktu 5 menit. Gangguan jaringan penguji tidak dihitung.' },
-  { id: 'availability', label: 'Cek koneksi berkala', how: 'Selama 60 menit, tiap 2 menit satu permintaan ringan (38 token) dikirim ke setiap pasangan. 30/30 berarti semua dijawab. Dibuat untuk menangkap error sesaat seperti "Failed to get available channel" yang tidak terlihat pada uji singkat.' },
-  { id: 'cost', label: 'Biaya', how: 'Tarif per token diukur dari tagihan akun (median 3 putaran), dikali token yang terpakai pada uji, dikali pengali harga supplier. Per 1.000 permintaan; ukuran token tiap jenis permintaan tertulis di bagian Harga.' }
+  { id: 'ttft', label: 'TTFT', how: 'Time to first token: dari request dikirim sampai token pertama diterima, termasuk reasoning token. p50 dan p95. Prompt pendek 43 token.' },
+  { id: 'reasoning', label: 'Reasoning', how: 'Pada prompt pendek 43 token: berapa persen output token dipakai model untuk reasoning sebelum menulis jawaban. Reasoning token ikut ditagih.' },
+  { id: 'success', label: 'Success rate', how: 'Request yang dilayani sampai selesai. Gagal = ditolak Tokenku, koneksi putus, atau timeout 5 menit. Gangguan jaringan di sisi penguji tidak dihitung.' },
+  { id: 'availability', label: 'Health check', how: 'Selama 60 menit, tiap 2 menit satu request ringan (38 token) dikirim ke setiap pasangan model-supplier. 30 dari 30 berarti semua dijawab. Dibuat untuk menangkap error sesaat seperti "Failed to get available channel" yang tidak terlihat pada uji singkat.' },
+  { id: 'cost', label: 'Biaya', how: 'Tarif per token diukur dari tagihan akun (median 3 putaran), dikali token yang terpakai pada uji, dikali pengali harga supplier. Per 1.000 request; ukuran token tiap jenis request tertulis di bagian Harga.' }
 ] as const;
 
 export type ModelRow = {
