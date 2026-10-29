@@ -15,6 +15,7 @@ export function limitations(s: ReturnType<typeof summarise>): string[] {
 
 /** Catatan tentang kegagalan yang pernah dialami pengguna di luar uji ini, dan apa yang terlihat dari data. */
 export const INCIDENT_NOTES = [
+  'Empat kegagalan deepseek-v4-1-flash terjadi pada sesi S1, uji chat pendek, permintaan ke-25–27, di keempat supplier pada menit yang sama, semuanya habis waktu 5 menit tanpa satu token pun. Keempat supplier gagal serentak, jadi sumbernya upstream model itu sendiri atau jalur bersama di Tokenku, bukan satu supplier tertentu. Pada S2 tidak terulang.',
   'Pesan "Failed to get available channel for model deepseek-v4-flash under group ChinaLLM" (28 Sep 2026) berasal dari distributor Tokenku: saat itu grup ChinaLLM tidak punya satu pun jalur upstream aktif untuk model itu. Kuncinya valid, modelnya ada, tetapi tidak ada yang melayani. Kejadian seperti ini sesaat dan tidak terlihat pada uji singkat; probe ketersediaan per 2 menit dipasang untuk menangkapnya.',
   'Gagal sambung dari agent biasanya salah satu dari: waktu tunggu yang panjang (model penalar bisa 30–47 detik sebelum token pertama, sementara klien sering memutus di 30 detik), 503 "upstream temporarily unavailable" seperti yang terjadi pada gemini-2.5-flash di kedua supplier, atau pesan di atas. Ketiganya ditangani dengan batas waktu ≥120 detik, ulang 1–2 kali, lalu pindah ke supplier berikutnya.'
 ];

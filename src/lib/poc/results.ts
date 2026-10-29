@@ -14,10 +14,10 @@ const median = (v: number[]) => quantile(v, 50);
 /** Definisi singkat kolom yang dipakai di halaman. */
 export const METRICS = [
   { id: 'ttft', label: 'Waktu tunggu (TTFT)', how: 'Dari permintaan dikirim sampai token pertama keluar; p50 dan p95. Prompt pendek 43 token.' },
-  { id: 'reasoning', label: 'Berpikir', how: 'Porsi token keluaran yang dipakai menalar sebelum menulis; ikut ditagih. Kolom reasoning_effort: low = permintaan yang sama dengan parameter itu, untuk melihat apakah model menghormatinya.' },
+  { id: 'reasoning', label: 'Berpikir', how: 'Pada prompt pendek 43 token: berapa persen token keluaran dipakai model menalar sebelum menulis jawaban, dan berapa median token keluarnya. Token berpikir ikut ditagih. Kolom reasoning_effort: low = prompt yang sama dikirim dengan parameter itu; kalau persen dan jumlah tokennya tidak turun, model mengabaikannya.' },
   { id: 'success', label: 'Berhasil', how: 'Permintaan yang dilayani sampai selesai. Gagal = ditolak Tokenku, putus, atau habis waktu 5 menit. Gangguan jaringan penguji tidak dihitung.' },
-  { id: 'availability', label: 'Ketersediaan', how: 'Satu permintaan ringan per pasangan tiap 2 menit sepanjang uji; menangkap error sesaat seperti "no available channel".' },
-  { id: 'cost', label: 'Biaya', how: 'Tarif per token diukur dari tagihan akun (median 3 putaran), dikali token terpakai pada uji, dikali pengali harga supplier. Per 1.000 permintaan.' }
+  { id: 'availability', label: 'Probe tiap 2 menit', how: 'Selama 60 menit, tiap 2 menit satu permintaan ringan (38 token) dikirim ke setiap pasangan. 30/30 berarti semua dijawab. Dibuat untuk menangkap error sesaat seperti "Failed to get available channel" yang tidak terlihat pada uji singkat.' },
+  { id: 'cost', label: 'Biaya', how: 'Tarif per token diukur dari tagihan akun (median 3 putaran), dikali token yang terpakai pada uji, dikali pengali harga supplier. Per 1.000 permintaan; ukuran token tiap jenis permintaan tertulis di bagian Harga.' }
 ] as const;
 
 export type ModelRow = {
@@ -52,9 +52,11 @@ export type SupplierRow = {
   ttftP50: number | null;
   ttftP95: number | null;
   tokensPerSecond: number | null;
+  /** Porsi token berpikir dan median token keluar pada prompt pendek (skenario latensi). */
   reasoningShare: number | null;
-  /** Mode tanpa menalar: null bila tidak diuji, 'tidak didukung' bila model menolak. */
-  noReasoning: { supported: boolean; ttftP50: number | null; ttftP95: number | null; reasoningShare: number | null } | null;
+  shortOutTokens: number | null;
+  /** Prompt pendek yang sama dengan reasoning_effort: low. */
+  noReasoning: { supported: boolean; ttftP50: number | null; ttftP95: number | null; reasoningShare: number | null; outTokens: number | null } | null;
   /** Probe ketersediaan berjangka: berapa probe berhasil dari total. */
   availability: { ok: number; total: number; errors: string[] } | null;
   costShortIdr: number | null;
@@ -109,7 +111,8 @@ export function summarise(report: SupplierReport) {
       const srTtft = srLat.map((s) => s.ttftAnyMs).filter((v): v is number => v !== null);
       const srSpeeds = sr.filter((s) => s.ok && s.outputTokens >= 100 && s.ttftAnyMs !== null && s.latencyMs > s.ttftAnyMs + 200)
         .map((s) => s.outputTokens / ((s.latencyMs - (s.ttftAnyMs as number)) / 1000));
-      const srDone = sr.filter((s) => s.ok && s.outputTokens > 0 && s.scenario !== 'tanpa-nalar');
+      // Porsi berpikir diambil dari prompt pendek saja agar sebanding dengan kolom reasoning_effort: low.
+      const srDone = srLat.filter((s) => s.outputTokens > 0);
       const srOut = srDone.reduce((a, s) => a + s.outputTokens, 0);
       const nr = sr.filter((s) => s.scenario === 'tanpa-nalar');
       const nrOk = nr.filter((s) => s.ok && !s.unsupported);
@@ -123,12 +126,14 @@ export function summarise(report: SupplierReport) {
         ttftP50: median(srTtft), ttftP95: quantile(srTtft, 95),
         tokensPerSecond: srSpeeds.length ? Math.round(median(srSpeeds) as number) : null,
         reasoningShare: srOut ? srDone.reduce((a, s) => a + s.reasoningTokens, 0) / srOut : null,
+        shortOutTokens: median(srDone.map((s) => s.outputTokens)),
         noReasoning: nr.length
           ? {
               supported: nrOk.length > 0 && count(nr, (s) => s.unsupported === true) === 0,
               ttftP50: median(nrOk.map((s) => s.ttftAnyMs).filter((v): v is number => v !== null)),
               ttftP95: quantile(nrOk.map((s) => s.ttftAnyMs).filter((v): v is number => v !== null), 95),
-              reasoningShare: nrOut ? nrOk.reduce((a, s) => a + s.reasoningTokens, 0) / nrOut : null
+              reasoningShare: nrOut ? nrOk.reduce((a, s) => a + s.reasoningTokens, 0) / nrOut : null,
+              outTokens: median(nrOk.filter((s) => s.outputTokens > 0).map((s) => s.outputTokens))
             }
           : null,
         availability: av.length
@@ -164,8 +169,12 @@ export function summarise(report: SupplierReport) {
   });
 
   const scenarioSizes = [...new Set(samples.map((s) => s.scenario))].map((name) => {
-    const rows = samples.filter((s) => s.scenario === name);
-    return { name, total: rows.length, contextTokens: median(rows.filter((s) => s.ok && s.inputTokens > 0).map((s) => s.inputTokens)) ?? 0 };
+    const rows = samples.filter((s) => s.scenario === name && s.ok && s.inputTokens > 0);
+    return {
+      name, total: samples.filter((s) => s.scenario === name).length,
+      contextTokens: median(rows.map((s) => s.inputTokens)) ?? 0,
+      outputTokens: median(rows.map((s) => s.outputTokens)) ?? 0
+    };
   });
 
   return {

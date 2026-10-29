@@ -34,12 +34,12 @@
 
   /** Kegagalan dari Tokenku, dikelompokkan per pasangan dan pesan. */
   const incidents = $derived.by(() => {
-    const map = new Map<string, { model: string; supplier: string; message: string; count: number }>();
+    const map = new Map<string, { session: string; scenario: string; model: string; supplier: string; message: string; count: number }>();
     for (const s of samples) {
       if (s.ok || s.failureKind === 'transport') continue;
       const message = `${s.status || 'putus'} · ${(s.error || 'tanpa pesan').slice(0, 110)}`;
-      const key = `${s.model}|${s.supplier}|${message}`;
-      const row = map.get(key) ?? { model: s.model, supplier: s.supplier, message, count: 0 };
+      const key = `${s.session}|${s.scenario}|${s.model}|${s.supplier}|${message}`;
+      const row = map.get(key) ?? { session: s.session, scenario: s.scenario, model: s.model, supplier: s.supplier, message, count: 0 };
       row.count += 1;
       map.set(key, row);
     }
@@ -106,10 +106,10 @@
                 <th>Model</th><th>Supplier</th>
                 <th class="num">TTFT p50</th><th class="num">TTFT p95</th>
                 <th class="num">Token/detik</th>
-                <th class="num">Berpikir</th>
-                <th class="num">reasoning_effort: low<small>TTFT p50 · porsi berpikir</small></th>
+                <th class="num">Berpikir<small>prompt pendek · token keluar</small></th>
+                <th class="num">reasoning_effort: low<small>TTFT p50 · berpikir · token keluar</small></th>
                 <th class="num">Berhasil</th>
-                <th class="num">Ketersediaan</th>
+                <th class="num">Probe tiap 2 mnt<small>60 menit</small></th>
               </tr>
             </thead>
             <tbody>
@@ -120,8 +120,8 @@
                   <td>{r.supplier}</td>
                   <td class="num">{sec(r.ttftP50)}</td><td class="num">{sec(r.ttftP95)}</td>
                   <td class="num">{r.tokensPerSecond ?? '—'}</td>
-                  <td class="num">{pct(r.reasoningShare)}</td>
-                  <td class="num">{#if !r.noReasoning}—{:else if !r.noReasoning.supported}<small>ditolak (400)</small>{:else}{sec(r.noReasoning.ttftP50)}<small>{pct(r.noReasoning.reasoningShare)} berpikir</small>{/if}</td>
+                  <td class="num">{pct(r.reasoningShare)}<small>{r.shortOutTokens ?? '—'} token</small></td>
+                  <td class="num">{#if !r.noReasoning}—{:else if !r.noReasoning.supported}<small>ditolak (400)</small>{:else}{sec(r.noReasoning.ttftP50)}<small>{pct(r.noReasoning.reasoningShare)} · {r.noReasoning.outTokens ?? '—'} token</small>{/if}</td>
                   <td class="num" class:bad={r.failures > 0}>{pct(r.successRate)}{#if r.failures}<small>{r.failures} dari {r.requests}</small>{/if}</td>
                   <td class="num" class:bad={r.availability !== null && r.availability.ok < r.availability.total}>{#if r.availability}{r.availability.ok}/{r.availability.total}{:else}—{/if}</td>
                 </tr>
@@ -133,7 +133,13 @@
       </section>
 
       <section class="section-block" id="harga">
+        {@const pendek = summary.scenarios.find((x) => x.name === 'akurasi')}
+        {@const panjang = summary.scenarios.find((x) => x.name === 'jawaban-panjang')}
         <div class="section-heading"><div><p>HARGA</p><h2>Biaya per 1.000 permintaan</h2></div><span>Token terpakai disamakan per model, jadi selisih antar supplier = pengali harga Tokenku</span></div>
+        <p class="sizes">
+          <b>Pertanyaan pendek</b>: median {pendek?.contextTokens.toLocaleString('id-ID')} token masuk, {pendek?.outputTokens.toLocaleString('id-ID')} token keluar (soal satu kalimat, jawaban satu angka atau kata).
+          <b>Jawaban panjang</b>: median {panjang?.contextTokens.toLocaleString('id-ID')} token masuk, {panjang?.outputTokens.toLocaleString('id-ID')} token keluar (uraian beberapa halaman). Token keluar sudah termasuk token berpikir.
+        </p>
         <div class="rb-scroll">
           <table class="rb-table">
             <thead><tr><th>Model</th><th>Supplier</th><th class="num">Pengali harga</th><th class="num">Pertanyaan pendek</th><th class="num">Jawaban panjang</th><th class="num">Selisih dari termurah</th></tr></thead>
@@ -164,12 +170,12 @@
         <div class="section-heading"><div><p>INSIDEN</p><h2>Kegagalan yang tercatat</h2></div></div>
         <div class="rb-scroll">
           <table class="rb-table">
-            <thead><tr><th>Model</th><th>Supplier</th><th class="num">Gagal</th><th>Pesan</th></tr></thead>
+            <thead><tr><th>Sesi</th><th>Uji</th><th>Model</th><th>Supplier</th><th class="num">Gagal</th><th>Pesan</th></tr></thead>
             <tbody>
               {#each incidents as inc}
-                <tr><td>{short(inc.model)}</td><td>{inc.supplier}</td><td class="num">{inc.count}</td><td class="note-cell">{inc.message}</td></tr>
+                <tr><td>{inc.session}</td><td>{scenarioLabel[inc.scenario] ?? inc.scenario}</td><td>{short(inc.model)}</td><td>{inc.supplier}</td><td class="num">{inc.count}</td><td class="note-cell">{inc.message}</td></tr>
               {:else}
-                <tr><td colspan="4">Tidak ada kegagalan dari Tokenku selama uji.</td></tr>
+                <tr><td colspan="6">Tidak ada kegagalan dari Tokenku selama uji.</td></tr>
               {/each}
             </tbody>
           </table>
@@ -234,6 +240,8 @@
 
   .rb-table td small { display: block; color: #949b90; font-size: 10px; }
   .rb-table th small { display: block; color: #949b90; font-size: 9px; font-weight: 400; text-transform: none; }
+  .sizes { margin: 0 0 10px; color: #4c5349; font-size: 12px; line-height: 1.6; }
+  .sizes b { color: #20241f; }
   .rb-table tr.group-start td { border-top: 2px solid #dfe3da; }
   .defs { margin: 12px 0 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px 18px; }
   .defs dt { color: #20241f; font-size: 11.5px; font-weight: 700; }
