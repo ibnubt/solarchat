@@ -15,7 +15,8 @@ export const WHAT_TESTED = [
 export const FOOTNOTES = [
   'Waktu tunggu: TTFT p95, dari permintaan dikirim sampai token pertama keluar. Model ini berpikir dulu, jadi teks jawaban muncul beberapa detik setelahnya.',
   'Biaya 1.000 chat: 1.000 pesan, tiap pesan dihitung 1.500 token masuk (pertanyaan ditambah riwayat) dan 600 token jawaban. Tarif diukur dari tagihan sungguhan.',
-  'Supplier: harga diambil dari yang termurah. Supplier lain untuk model yang sama memberi mutu dan keandalan setara, selisihnya hanya harga.'
+  'Supplier: harga diambil dari yang termurah. Supplier lain untuk model yang sama memberi mutu dan keandalan setara, selisihnya hanya harga.',
+  'Token berpikir: bagian token keluaran yang dipakai model untuk menalar sebelum menulis. Token ini ikut ditagih walau tidak pernah terlihat pengguna.'
 ];
 
 export const METHOD_NOTES = [
@@ -34,6 +35,7 @@ export function modelTable(a: Analysis) {
       waitMs: c.primary.ttftAnyP95,
       speed: c.primary.tokensPerSecond,
       costUsd: c.primary.costPer1000ChatsUsd,
+      reasoningShare: c.primary.reasoningShare,
       failures: c.primary.upstreamFailures,
       requests: c.primary.requests,
       savingPercent: c.savingPercent
@@ -49,7 +51,12 @@ export function takeaways(a: Analysis): string[] {
   const slowest = [...rows].reverse().find((r) => r.waitMs !== null);
   const cheapest = priced.reduce((min, r) => ((r.costUsd as number) < (min.costUsd as number) ? r : min), priced[0]);
   const maxSaving = Math.max(...a.chains.map((c) => c.savingPercent));
-  const empty = a.pairs.reduce((s, p) => s + p.emptyAnswers, 0);
+  // Model yang paling boros menalar: token nalar ikut dibayar walau tidak terbaca pengguna.
+  const thinkers = a.pairs
+    .filter((p) => p.reasoningShare !== null)
+    .map((p) => ({ model: p.model, reasoningShare: Math.round((p.reasoningShare as number) * 100) }))
+    .sort((x, y) => y.reasoningShare - x.reasoningShare);
+  const worstThinker = thinkers[0];
   const solo = a.chains.filter((c) => c.alternatives === 0).map((c) => c.model);
 
   const rupiah = (usd: number | null) => (usd === null ? '—' : `Rp ${Math.round(usd * USD_TO_IDR).toLocaleString('id-ID')}`);
@@ -70,7 +77,9 @@ export function takeaways(a: Analysis): string[] {
     out.push(`${slowest.model} paling lambat sekaligus lebih mahal dari rata-rata, jadi tidak ada alasan memakainya.`);
   }
   out.push(`Pindah supplier hanya menghemat biaya sampai ${maxSaving}%; mutu jawaban dan keandalannya sama, kecepatannya pun tidak berubah banyak.`);
-  if (empty) out.push(`${empty} dari ${a.totals.requests.toLocaleString('id-ID')} jawaban keluar kosong karena jatah token habis dipakai model untuk berpikir. Batas token di aplikasi perlu dinaikkan.`);
+  if (worstThinker) {
+    out.push(`Token untuk berpikir ikut ditagih: ${worstThinker.model} memakai ${worstThinker.reasoningShare}% token keluarnya untuk menalar, bahkan pada pertanyaan sepele.`);
+  }
   if (solo.length) out.push(`${solo.join(' dan ')} hanya ada di satu supplier, jadi tidak punya pengganti kalau supplier itu bermasalah.`);
   return out;
 }
@@ -80,6 +89,7 @@ export function limitations(a: Analysis): string[] {
     `Diuji ${a.totals.sessions} kali pada satu rentang waktu, jadi belum terlihat bedanya jam sibuk dan jam sepi.`,
     'Angka kecepatan cukup untuk membandingkan, belum cukup untuk dijadikan janji layanan.',
     'Keramaian diuji sampai 16 permintaan serentak, sesuai pemakaian internal.',
-    'Jawaban panjang dinilai selesai atau terpotong, bukan bagus atau tidaknya isi.'
+    'Jawaban panjang dinilai selesai atau terpotong, bukan bagus atau tidaknya isi.',
+    `Uji chat pendek memberi jatah 512 token; sebagian model penalar menghabiskannya untuk berpikir sehingga ${a.pairs.reduce((s, p) => s + p.emptyAnswers, 0)} jawaban keluar kosong. Aplikasi memakai 16.384 token sehingga tidak terdampak.`
   ];
 }

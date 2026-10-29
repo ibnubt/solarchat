@@ -124,6 +124,7 @@
                 <th class="num">Waktu tunggu</th>
                 <th class="num">Menulis</th>
                 <th class="num">Biaya 1.000 chat</th>
+                <th class="num">Token berpikir</th>
                 <th>Supplier termurah</th>
                 <th>Cadangan</th>
                 <th class="num">Gagal</th>
@@ -136,6 +137,7 @@
                   <td class="num">{ms(m.waitMs)}</td>
                   <td class="num">{num(m.speed)} tok/dtk</td>
                   <td class="num">{rupiah(m.costUsd)}</td>
+                  <td class="num">{m.reasoningShare === null ? '—' : `${Math.round(m.reasoningShare * 100)}%`}</td>
                   <td>{m.supplier}{#if m.savingPercent > 0}<small> hemat {m.savingPercent}%</small>{/if}</td>
                   <td>{m.fallbacks.length ? m.fallbacks.join(', ') : '—'}</td>
                   <td class="num" class:bad={m.failures > 0}>{m.failures === 0 ? '—' : `${m.failures} / ${m.requests}`}</td>

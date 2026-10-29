@@ -50,6 +50,8 @@ export type PairMetrics = {
   truncated: number;
   rateLimited: number;
   emptyAnswers: number;
+  /** Bagian token keluar yang dipakai menalar, bukan menulis jawaban. */
+  reasoningShare: number | null;
   costPer1000ChatsUsd: number | null;
   verdicts: Record<string, Verdict>;
   passed: number;
@@ -116,6 +118,11 @@ export function analysePair(report: SupplierReport, model: string, supplier: str
     truncated: long.filter((s) => s.truncated).length,
     rateLimited: samples.filter((s) => s.status === 429).length,
     emptyAnswers: samples.filter((s) => s.ok && s.emptyContent).length,
+    reasoningShare: (() => {
+      const done = samples.filter((s) => s.ok && s.outputTokens > 0);
+      const out = done.reduce((sum, s) => sum + s.outputTokens, 0);
+      return out ? done.reduce((sum, s) => sum + s.reasoningTokens, 0) / out : null;
+    })(),
     costPer1000ChatsUsd
   };
 
