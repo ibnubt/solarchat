@@ -8,7 +8,7 @@
   import ChartBlock from '$lib/markdown/ChartBlock.svelte';
   import type { ChartSpec } from '$lib/markdown/chart';
   import { CHAT_PROFILE, USD_TO_IDR, type PairMetrics, type Sample, type SupplierReport } from '$lib/poc/suppliers';
-  import { HOW_TO_READ, METHOD_NOTES, WHAT_TESTED, cardSummary, conclusion, limitations } from '$lib/poc/narrative';
+  import { FOOTNOTES, METHOD_NOTES, WHAT_TESTED, limitations, modelTable, takeaways } from '$lib/poc/narrative';
   import '$lib/markdown/blocks.css';
 
   type Analysis = {
@@ -38,11 +38,11 @@
 
   const suppliers = $derived([...new Set(analysis?.pairs.map((p) => p.supplier) ?? [])].sort());
   const limits = $derived(analysis ? limitations(analysis as never) : []);
-  const summary = $derived(analysis ? conclusion(analysis as never) : null);
+  const models = $derived(analysis ? modelTable(analysis as never) : []);
+  const points = $derived(analysis ? takeaways(analysis as never) : []);
 
   const SECTIONS = [
-    { id: 'kesimpulan', label: 'Kesimpulan' },
-    { id: 'pilihan', label: 'Pilihan per model' },
+    { id: 'ringkasan', label: 'Ringkasan' },
     { id: 'cara', label: 'Yang diuji' },
     { id: 'hasil', label: 'Hasil lengkap' },
     { id: 'lampiran', label: 'Data mentah' }
@@ -113,44 +113,40 @@
         {#each SECTIONS as s}<a href={`#${s.id}`}>{s.label}</a>{/each}
       </nav>
 
-      <section class="decision" id="kesimpulan">
-        <p class="kicker">KESIMPULAN</p>
-        <h1>{summary?.headline}</h1>
-        <ol class="points">
-          {#each summary?.points ?? [] as point}
-            <li><strong>{point.label}</strong><span>{point.text}</span></li>
-          {/each}
-        </ol>
-        <p class="basis">
-          Dasar: {analysis.totals.requests.toLocaleString('id-ID')} permintaan sungguhan ke
-          {analysis.pairs.length} kombinasi model dan supplier, biaya uji ${analysis.totals.costUsd.toFixed(2)}.
-        </p>
-      </section>
-
-      <section class="section-block" id="pilihan">
-        <div class="section-heading"><div><p>PILIHAN PER MODEL</p><h2>Supplier mana untuk model mana</h2></div><span>Dipilih yang termurah selama mutu dan keandalannya setara</span></div>
-        <dl class="legend">
-          {#each HOW_TO_READ as h}<div><dt>{h.term}</dt><dd>{h.text}</dd></div>{/each}
-        </dl>
-        <div class="decision-grid">
-          {#each analysis.chains as item}
-            {@const card = cardSummary(item.primary, analysis.pairs.filter((p) => p.model === item.model))}
-            <article>
-              <header><h3>{short(item.model)}</h3>{#if item.savingPercent > 0}<span class="save">hemat {item.savingPercent}%</span>{/if}</header>
-              <p class="choice"><strong>{item.primary.supplier}</strong></p>
-              <p class="why">{card.reason}</p>
-              <dl>
-                <div><dt>Berhasil</dt><dd>{pct(item.primary.reliability)}<small>{card.failNote}</small></dd></div>
-                <div><dt>Waktu tunggu</dt><dd>{ms(item.primary.ttftAnyP95)}<small>wajar di bawah 3 detik</small></dd></div>
-                <div><dt>Biaya 1.000 chat</dt><dd>{rupiah(item.primary.costPer1000ChatsUsd)}<small>{card.comparison ?? 'tidak ada pembanding'}</small></dd></div>
-              </dl>
-              <p class="fallback">
-                {#if item.alternatives > 0}Cadangan: {item.chain.slice(1).join(', ')}{:else}<b>Tidak ada cadangan.</b> Model ini hanya ada di satu supplier.{/if}
-              </p>
-              {#if card.warnings.length}<p class="warn">{card.warnings.join('. ')}.</p>{/if}
-            </article>
-          {/each}
+      <section class="decision" id="ringkasan">
+        <p class="kicker">RINGKASAN</p>
+        <h1>Model mana yang dipakai.</h1>
+        <div class="rb-scroll">
+          <table class="rb-table">
+            <thead>
+              <tr>
+                <th>Model</th>
+                <th class="num">Waktu tunggu</th>
+                <th class="num">Menulis</th>
+                <th class="num">Biaya 1.000 chat</th>
+                <th>Supplier termurah</th>
+                <th>Cadangan</th>
+                <th class="num">Gagal</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each models as m}
+                <tr>
+                  <td><strong>{short(m.model)}</strong></td>
+                  <td class="num">{ms(m.waitMs)}</td>
+                  <td class="num">{num(m.speed)} tok/dtk</td>
+                  <td class="num">{rupiah(m.costUsd)}</td>
+                  <td>{m.supplier}{#if m.savingPercent > 0}<small> hemat {m.savingPercent}%</small>{/if}</td>
+                  <td>{m.fallbacks.length ? m.fallbacks.join(', ') : '—'}</td>
+                  <td class="num" class:bad={m.failures > 0}>{m.failures === 0 ? '—' : `${m.failures} / ${m.requests}`}</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
         </div>
+        <ol class="points">{#each points as p}<li>{p}</li>{/each}</ol>
+        <ul class="footnotes">{#each FOOTNOTES as f}<li>{f}</li>{/each}</ul>
+        <p class="basis">Dasar: {analysis.totals.requests.toLocaleString('id-ID')} permintaan ke {analysis.pairs.length} kombinasi model dan supplier, biaya uji ${analysis.totals.costUsd.toFixed(2)}.</p>
       </section>
 
       <section class="section-block" id="cara">
@@ -328,19 +324,8 @@
 
   .report-content { width: min(1120px, calc(100% - 40px)); margin: 0 auto; padding: 34px 0 90px; display: flex; flex-direction: column; gap: 42px; }
   .kicker { margin: 0 0 10px; color: #858c82; font-family: 'DM Mono', monospace; font-size: 10px; letter-spacing: .12em; }
-  .decision h1 { margin: 0; font-size: clamp(28px, 4vw, 44px); line-height: 1.1; letter-spacing: -.045em; font-weight: 600; }
+  .decision h1 { margin-bottom: 18px; font-size: clamp(26px, 3.4vw, 38px); line-height: 1.1; letter-spacing: -.045em; font-weight: 600; }
 
-  .decision-grid { margin-top: 26px; display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
-  .decision-grid article { padding: 16px; border: 1px solid #dfe3da; border-radius: 14px; background: #fff; box-shadow: 0 8px 26px rgba(37,49,31,.045); }
-  .decision-grid header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-  .decision-grid h3 { margin: 0; font-size: 13px; font-weight: 700; overflow-wrap: anywhere; }
-  .save { flex: 0 0 auto; padding: 3px 7px; border-radius: 6px; background: #e6f0d3; color: #4b6d0a; font-family: 'DM Mono', monospace; font-size: 9px; }
-  .choice { margin: 12px 0 2px; font-size: 20px; letter-spacing: -.02em; }
-  .fallback { margin: 0; color: #7b8278; font-size: 11px; }
-  .decision-grid dl { margin: 14px 0 0; padding-top: 12px; border-top: 1px solid #edf0e8; display: grid; gap: 7px; }
-  .decision-grid dl div { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
-  .decision-grid dt { color: #868d82; font-size: 11px; }
-  .decision-grid dd { margin: 0; font-family: 'DM Mono', monospace; font-size: 12px; color: #252a23; }
 
   .section-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 14px; margin-bottom: 14px; }
   .section-heading p { margin: 0 0 4px; color: #969d92; font-family: 'DM Mono', monospace; font-size: 9px; letter-spacing: .12em; }
@@ -359,18 +344,13 @@
   .chart-stack { display: grid; gap: 12px; }
   .note { margin: 12px 0 0; color: #7b8278; font-size: 11px; line-height: 1.6; }
 
-  .points { margin: 18px 0 0; padding: 0 0 0 20px; display: grid; gap: 11px; max-width: 820px; }
-  .points li { color: #4c5349; font-size: 13.5px; line-height: 1.65; }
-  .points strong { display: block; color: #20241f; font-size: 14px; }
+  .points { margin: 18px 0 0; padding: 0 0 0 20px; display: grid; gap: 8px; max-width: 840px; }
+  .points li { color: #3f473c; font-size: 13.5px; line-height: 1.6; }
+  .footnotes { margin: 16px 0 0; padding: 0 0 0 16px; display: grid; gap: 5px; max-width: 840px; list-style: none; }
+  .footnotes li { position: relative; color: #868d82; font-size: 11px; line-height: 1.55; }
+  .footnotes li::before { content: '—'; position: absolute; left: -16px; }
+  .rb-table small { color: #949b90; font-size: 10px; font-weight: 400; }
   .basis { margin: 20px 0 0; color: #868d82; font-size: 12px; }
-  .why { margin: 2px 0 0; color: #6c7468; font-size: 11.5px; line-height: 1.55; }
-  .legend { margin: 0 0 14px; padding: 14px 16px; display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 12px 20px; border: 1px solid #dfe3da; border-radius: 12px; background: #f7f8f4; }
-  .legend dt { color: #20241f; font-size: 12px; font-weight: 700; }
-  .legend dd { margin: 3px 0 0; color: #5f665c; font-size: 11.5px; line-height: 1.55; }
-  .decision-grid dl div { align-items: start; }
-  .decision-grid dd { text-align: right; }
-  .decision-grid dd small { display: block; margin-top: 2px; color: #949b90; font-family: 'Manrope', sans-serif; font-size: 10px; font-weight: 400; }
-  .warn { margin: 8px 0 0; padding-top: 8px; border-top: 1px solid #f1e3e0; color: #a54139; font-size: 11px; line-height: 1.5; }
   .cases { padding: 0 12px 12px; display: grid; gap: 10px; }
   .toc { position: sticky; top: 62px; z-index: 9; display: flex; flex-wrap: wrap; gap: 4px; margin: -6px -8px 0; padding: 8px; border-bottom: 1px solid #e6e9e1; background: rgba(249,250,246,.94); backdrop-filter: blur(8px); }
   .toc a { padding: 5px 10px; border-radius: 999px; color: #72796f; font-size: 11px; text-decoration: none; }
@@ -418,8 +398,7 @@
     .report-content { width: calc(100% - 24px); padding-top: 22px; gap: 32px; }
     .section-heading { flex-direction: column; align-items: flex-start; gap: 4px; }
     .section-heading span { text-align: left; }
-    .decision-grid { grid-template-columns: 1fr; }
-    .case-body { grid-template-columns: 1fr; }
+      .case-body { grid-template-columns: 1fr; }
     .case-body > div + div { border-left: 0; border-top: 1px solid #edf0e8; }
     }
 </style>
