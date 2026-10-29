@@ -14,7 +14,7 @@ const median = (v: number[]) => quantile(v, 50);
 /** Definisi singkat kolom yang dipakai di halaman. */
 export const METRICS = [
   { id: 'ttft', label: 'Waktu tunggu (TTFT)', how: 'Dari permintaan dikirim sampai token pertama keluar; p50 dan p95. Prompt pendek 43 token.' },
-  { id: 'reasoning', label: 'Berpikir', how: 'Porsi token keluaran yang dipakai menalar sebelum menulis; ikut ditagih. "Tanpa menalar" = permintaan yang sama dengan reasoning_effort: low.' },
+  { id: 'reasoning', label: 'Berpikir', how: 'Porsi token keluaran yang dipakai menalar sebelum menulis; ikut ditagih. Kolom reasoning_effort: low = permintaan yang sama dengan parameter itu, untuk melihat apakah model menghormatinya.' },
   { id: 'success', label: 'Berhasil', how: 'Permintaan yang dilayani sampai selesai. Gagal = ditolak Tokenku, putus, atau habis waktu 5 menit. Gangguan jaringan penguji tidak dihitung.' },
   { id: 'availability', label: 'Ketersediaan', how: 'Satu permintaan ringan per pasangan tiap 2 menit sepanjang uji; menangkap error sesaat seperti "no available channel".' },
   { id: 'cost', label: 'Biaya', how: 'Tarif per token diukur dari tagihan akun (median 3 putaran), dikali token terpakai pada uji, dikali pengali harga supplier. Per 1.000 permintaan.' }

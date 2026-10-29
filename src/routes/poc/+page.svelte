@@ -107,7 +107,7 @@
                 <th class="num">TTFT p50</th><th class="num">TTFT p95</th>
                 <th class="num">Token/detik</th>
                 <th class="num">Berpikir</th>
-                <th class="num">Tanpa menalar: TTFT p50</th>
+                <th class="num">reasoning_effort: low<small>TTFT p50 · porsi berpikir</small></th>
                 <th class="num">Berhasil</th>
                 <th class="num">Ketersediaan</th>
               </tr>
@@ -121,7 +121,7 @@
                   <td class="num">{sec(r.ttftP50)}</td><td class="num">{sec(r.ttftP95)}</td>
                   <td class="num">{r.tokensPerSecond ?? '—'}</td>
                   <td class="num">{pct(r.reasoningShare)}</td>
-                  <td class="num">{#if !r.noReasoning}—{:else if !r.noReasoning.supported}<small>tidak didukung</small>{:else}{sec(r.noReasoning.ttftP50)}<small>berpikir {pct(r.noReasoning.reasoningShare)}</small>{/if}</td>
+                  <td class="num">{#if !r.noReasoning}—{:else if !r.noReasoning.supported}<small>ditolak (400)</small>{:else}{sec(r.noReasoning.ttftP50)}<small>{pct(r.noReasoning.reasoningShare)} berpikir</small>{/if}</td>
                   <td class="num" class:bad={r.failures > 0}>{pct(r.successRate)}{#if r.failures}<small>{r.failures} dari {r.requests}</small>{/if}</td>
                   <td class="num" class:bad={r.availability !== null && r.availability.ok < r.availability.total}>{#if r.availability}{r.availability.ok}/{r.availability.total}{:else}—{/if}</td>
                 </tr>
@@ -233,6 +233,7 @@
   .section-heading span { color: #8a9187; font-size: 11px; text-align: right; max-width: 60%; }
 
   .rb-table td small { display: block; color: #949b90; font-size: 10px; }
+  .rb-table th small { display: block; color: #949b90; font-size: 9px; font-weight: 400; text-transform: none; }
   .rb-table tr.group-start td { border-top: 2px solid #dfe3da; }
   .defs { margin: 12px 0 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px 18px; }
   .defs dt { color: #20241f; font-size: 11.5px; font-weight: 700; }
