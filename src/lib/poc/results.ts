@@ -15,7 +15,7 @@ const median = (v: number[]) => quantile(v, 50);
 export const METRICS = [
   { id: 'ttft', label: 'TTFT', how: 'Time to first token: dari request dikirim sampai token pertama diterima, termasuk reasoning token. p50 dan p95. Prompt pendek 43 token.' },
   { id: 'reasoning', label: 'Reasoning', how: 'Pada prompt pendek 43 token: berapa persen output token dipakai model untuk reasoning sebelum menulis jawaban. Reasoning token ikut ditagih.' },
-  { id: 'success', label: 'Success rate', how: 'Request yang dilayani sampai selesai. Gagal = ditolak Tokenku, koneksi putus, atau timeout 5 menit. Gangguan jaringan di sisi penguji tidak dihitung.' },
+  { id: 'success', label: 'Success rate', how: 'Request yang dilayani sampai selesai, dari seluruh uji pada pasangan itu: per sesi 50 TTFT + 32 beban serentak + 40 soal + 8 grafik + 3 jawaban panjang + 5 riwayat panjang = 138, dikali 2 sesi = 276 (model satu supplier: 86 × 2 = 172). Gagal = ditolak Tokenku, koneksi putus, atau timeout 5 menit. Request yang gagal karena jaringan di sisi penguji dikeluarkan dari pembagi, sehingga angkanya bisa 275. Health check dan reasoning_effort tidak termasuk.' },
   { id: 'availability', label: 'Health check', how: 'Selama 60 menit, tiap 2 menit satu request ringan (38 token) dikirim ke setiap pasangan model-supplier. 30 dari 30 berarti semua dijawab. Dibuat untuk menangkap error sesaat seperti "Failed to get available channel" yang tidak terlihat pada uji singkat.' },
   { id: 'cost', label: 'Biaya', how: 'Tarif per token diukur dari tagihan akun (median 3 putaran), dikali token yang terpakai pada uji, dikali pengali harga supplier. Per 1.000 request; ukuran token tiap jenis request tertulis di bagian Harga.' }
 ] as const;
