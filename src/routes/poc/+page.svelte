@@ -8,7 +8,7 @@
   import ChartBlock from '$lib/markdown/ChartBlock.svelte';
   import type { ChartSpec } from '$lib/markdown/chart';
   import { CHAT_PROFILE, USD_TO_IDR, type PairMetrics, type Sample, type SupplierReport } from '$lib/poc/suppliers';
-  import { METHOD_NOTES, PURPOSE, SCENARIO_PURPOSE, limitations, nextSteps } from '$lib/poc/narrative';
+  import { METHOD_NOTES, PURPOSE, limitations, nextSteps } from '$lib/poc/narrative';
   import '$lib/markdown/blocks.css';
 
   type Analysis = {
@@ -159,19 +159,36 @@
       </section>
 
       <section class="section-block" id="cara">
-        <div class="section-heading"><div><p>CARA UJI</p><h2>Yang diukur dan ambang lulusnya</h2></div><span>{analysis.pairs.length} pasangan model-supplier</span></div>
+        <div class="section-heading"><div><p>CARA UJI</p><h2>Yang dikirim dan yang diterima</h2></div><span>{analysis.pairs.length} pasangan model-supplier</span></div>
         <p class="purpose">{PURPOSE}</p>
-        <div class="rb-scroll">
-          <table class="rb-table">
-            <thead><tr><th>Skenario</th><th>Yang diukur</th><th class="num">Per pasangan</th><th class="num">Total</th></tr></thead>
-            <tbody>
-              {#each analysis.scenarios as sc}
-                <tr><td><strong>{sc.name}</strong></td><td>{SCENARIO_PURPOSE[sc.name] ?? '—'}</td><td class="num">{sc.perPair}</td><td class="num">{sc.total.toLocaleString('id-ID')}</td></tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-        <div class="rb-scroll" style="margin-top:10px">
+
+        {#each report.examples ?? [] as ex}
+          {@const count = analysis.scenarios.find((sc) => sc.name === ex.scenario)}
+          <article class="case">
+            <header>
+              <h3>{ex.scenario}</h3>
+              {#if count}<span>{count.perPair} per pasangan · {count.total.toLocaleString('id-ID')} total</span>{/if}
+            </header>
+            <div class="case-body">
+              <div>
+                <p class="cap">Dikirim</p>
+                <pre><code>{JSON.stringify(ex.request, null, 1)}</code></pre>
+              </div>
+              <div>
+                <p class="cap">Diterima · {ex.model} di {ex.supplier}</p>
+                <pre><code>{ex.response.content}</code></pre>
+                <p class="stats">
+                  finish_reason {ex.response.finish_reason} · masuk {ex.response.prompt_tokens.toLocaleString('id-ID')} token ·
+                  keluar {ex.response.completion_tokens.toLocaleString('id-ID')} ({ex.response.reasoning_tokens.toLocaleString('id-ID')} nalar) ·
+                  token pertama {ms(ex.response.ttft_any_ms)} · teks pertama {ms(ex.response.ttft_content_ms)} · total {ms(ex.response.latency_ms)}
+                </p>
+              </div>
+            </div>
+            <p class="judge"><span>Lulus bila</span>{ex.judge}</p>
+          </article>
+        {/each}
+
+        <div class="rb-scroll" style="margin-top:12px">
           <table class="rb-table">
             <thead><tr><th>Kriteria lulus</th><th>Ambang, ditetapkan sebelum uji</th></tr></thead>
             <tbody>{#each report.criteria as c}<tr><td><strong>{c.label}</strong></td><td>{c.detail}</td></tr>{/each}</tbody>
@@ -274,6 +291,10 @@
 
       <section class="section-block" id="lampiran">
         <div class="section-heading"><div><p>LAMPIRAN</p><h2>Sampel mentah</h2></div><span>{filtered.length.toLocaleString('id-ID')} dari {samples.length.toLocaleString('id-ID')} baris</span></div>
+        <details class="shape">
+          <summary>Bentuk satu baris data</summary>
+          <pre><code>{JSON.stringify(samples[0], null, 1)}</code></pre>
+        </details>
         <div class="filters">
           <label>Skenario<select bind:value={scenarioFilter}><option value="all">semua</option>{#each scenarios as s}<option value={s}>{s}</option>{/each}</select></label>
           <label>Pasangan<select bind:value={pairFilter}><option value="all">semua</option>{#each analysis.pairs as p}<option value={`${p.model}::${p.supplier}`}>{short(p.model)} · {p.supplier}</option>{/each}</select></label>
@@ -364,12 +385,29 @@
   .toc a { padding: 5px 10px; border-radius: 999px; color: #72796f; font-size: 11px; text-decoration: none; }
   .toc a:hover { background: #e8ebe3; color: #20241f; }
 
+  .case { margin: 0 0 10px; border: 1px solid #dfe3da; border-radius: 12px; background: #fff; overflow: hidden; }
+  .case header { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 14px; border-bottom: 1px solid #e6e9e1; background: #f7f8f4; }
+  .case h3 { margin: 0; font-family: 'DM Mono', monospace; font-size: 12px; font-weight: 500; }
+  .case header span { color: #868d82; font-size: 11px; }
+  .case-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .case-body > div { min-width: 0; padding: 12px 14px; }
+  .case-body > div + div { border-left: 1px solid #edf0e8; }
+  .cap { margin: 0 0 7px; color: #969d92; font-family: 'DM Mono', monospace; font-size: 9px; text-transform: uppercase; letter-spacing: .08em; }
+  .case pre { margin: 0; max-height: 210px; padding: 11px 12px; overflow: auto; border-radius: 9px; background: #20241f; color: #eef2e9; font-family: 'DM Mono', monospace; font-size: 11px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .case .stats { margin: 9px 0 0; color: #6c7468; font-family: 'DM Mono', monospace; font-size: 10px; line-height: 1.6; }
+  .judge { margin: 0; padding: 10px 14px; border-top: 1px solid #edf0e8; background: #fafbf8; color: #4c5349; font-size: 12px; line-height: 1.6; }
+  .judge span { margin-right: 7px; color: #4b6d0a; font-family: 'DM Mono', monospace; font-size: 9px; text-transform: uppercase; letter-spacing: .08em; }
+
   .purpose { max-width: 760px; margin: 0 0 14px; padding: 13px 15px; border-left: 3px solid #8fbd34; border-radius: 0 10px 10px 0; background: #f2f5ec; color: #2d3329; font-size: 13.5px; line-height: 1.65; }
 
   .plain { margin: 0; padding: 18px 18px 18px 36px; border: 1px solid #dfe3da; border-radius: 12px; background: #fff; color: #4c5349; font-size: 13px; line-height: 1.7; }
   .plain li + li { margin-top: 9px; }
   .plain.limits, .plain.notes { background: #f7f8f4; }
   .plain.notes { margin-top: 10px; font-size: 12.5px; }
+
+  .shape { margin-bottom: 10px; border: 1px solid #dfe3da; border-radius: 11px; background: #fff; }
+  .shape summary { padding: 10px 14px; color: #4c5349; font-size: 12px; font-weight: 600; cursor: pointer; }
+  .shape pre { margin: 0; padding: 0 14px 14px; overflow: auto; max-height: 300px; font-family: 'DM Mono', monospace; font-size: 11px; line-height: 1.55; color: #3f473c; }
 
   .filters { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 10px; }
   .filters label { display: inline-flex; align-items: center; gap: 7px; color: #72796f; font-size: 11px; }
@@ -391,6 +429,8 @@
     .section-heading { flex-direction: column; align-items: flex-start; gap: 4px; }
     .section-heading span { text-align: left; }
     .decision-grid { grid-template-columns: 1fr; }
+    .case-body { grid-template-columns: 1fr; }
+    .case-body > div + div { border-left: 0; border-top: 1px solid #edf0e8; }
     .findings li { grid-template-columns: 1fr; gap: 4px; }
   }
 </style>

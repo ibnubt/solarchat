@@ -4,22 +4,12 @@ import type { analyse } from './suppliers';
 export const PURPOSE =
   'Supplier Tokenku mana yang dipakai untuk tiap model, dan apa urutan cadangannya. Model yang sama diadu antar supplier karena harganya berbeda sampai 32%.';
 
-/** Apa yang diukur tiap skenario. Kunci harus sama dengan nama skenario pada sampel. */
-export const SCENARIO_PURPOSE: Record<string, string> = {
-  latensi: 'Waktu token pertama dan kecepatan menulis, satu per satu tanpa beban',
-  beban: '16 permintaan serentak: pelebaran latensi dan penolakan rate limit',
-  akurasi: 'Soal berjawaban pasti; menangkap supplier yang menyajikan model bermutu lebih rendah',
-  'format-chart': 'Blok grafik diminta, JSON-nya diperiksa benar-benar terbaca',
-  'jawaban-panjang': 'Jawaban panjang: terpotong batas token atau utuh',
-  'konteks-panjang': 'Kode ditanam di awal riwayat 20 ribu token lalu ditanyakan di akhir; menangkap supplier yang memotong konteks'
-};
-
 /** Keputusan metode yang mengubah angka, jadi harus diketahui pembaca. */
 export const METHOD_NOTES = [
-  'Harga diukur dari selisih tagihan akun sebelum uji, bukan dari daftar harga Tokenku yang terbukti keliru untuk sebagian model.',
-  'Kegagalan jaringan di sisi penguji dicoba ulang dan dikeluarkan dari angka keandalan; hanya penolakan Tokenku yang dihitung.',
-  'Model ini memancarkan token penalaran sebelum teks jawaban, jadi waktu respons dipisah dua: token pertama apa pun, dan teks jawaban pertama.',
-  'Uji latensi berurutan per model dengan supplier paralel, supaya antrean penguji tidak terhitung sebagai kelambatan supplier.'
+  'Harga diukur dari selisih tagihan akun, bukan dari daftar harga Tokenku yang keliru untuk sebagian model.',
+  'Kegagalan jaringan sisi penguji dikeluarkan dari angka keandalan; hanya penolakan Tokenku yang dihitung.',
+  'Waktu respons dipisah dua karena model menalar sebelum menjawab: token pertama apa pun, dan teks jawaban pertama.',
+  'Uji latensi berurutan per model, supplier paralel, agar antrean penguji tidak terhitung sebagai kelambatan supplier.'
 ];
 
 export function limitations(analysis: ReturnType<typeof analyse>): string[] {

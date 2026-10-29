@@ -37484,5 +37484,178 @@
       "correct": true,
       "answerPreview": "66"
     }
+  ],
+  "examples": [
+    {
+      "scenario": "latensi",
+      "model": "glm-5.3-flash",
+      "supplier": "ChinaLLM",
+      "judge": "Dicatat waktu token pertama dan lama total; isi jawaban tidak dinilai.",
+      "request": {
+        "model": "glm-5.3-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Sebutkan ibu kota Indonesia. Jawab satu kata saja."
+          }
+        ],
+        "max_tokens": 512,
+        "stream": true
+      },
+      "response": {
+        "finish_reason": "stop",
+        "prompt_tokens": 27,
+        "completion_tokens": 110,
+        "reasoning_tokens": 106,
+        "latency_ms": 5303,
+        "ttft_any_ms": 3762,
+        "ttft_content_ms": 5191,
+        "content": "Jakarta"
+      }
+    },
+    {
+      "scenario": "beban",
+      "model": "glm-5.3-flash",
+      "supplier": "ChinaLLM",
+      "judge": "Permintaan yang sama dikirim 16 sekaligus; dihitung penolakan rate limit dan pelebaran latensi.",
+      "request": {
+        "model": "glm-5.3-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Sebutkan ibu kota Indonesia. Jawab satu kata saja."
+          }
+        ],
+        "max_tokens": 512,
+        "stream": true
+      },
+      "response": {
+        "finish_reason": "stop",
+        "prompt_tokens": 27,
+        "completion_tokens": 217,
+        "reasoning_tokens": 213,
+        "latency_ms": 7230,
+        "ttft_any_ms": 3160,
+        "ttft_content_ms": 7179,
+        "content": "Jakarta"
+      }
+    },
+    {
+      "scenario": "akurasi",
+      "model": "glm-5.3-flash",
+      "supplier": "ChinaLLM",
+      "judge": "Benar bila jawaban memuat angka 47. Kunci dihitung manual, bukan dari model.",
+      "request": {
+        "model": "glm-5.3-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Teratai menutupi kolam dua kali lipat tiap hari dan penuh pada hari ke-48. Hari ke berapa kolam tertutup separuh? Jawab hanya angkanya."
+          }
+        ],
+        "max_tokens": 1024,
+        "stream": true
+      },
+      "response": {
+        "finish_reason": "stop",
+        "prompt_tokens": 57,
+        "completion_tokens": 26,
+        "reasoning_tokens": 23,
+        "latency_ms": 3584,
+        "ttft_any_ms": 3305,
+        "ttft_content_ms": 3546,
+        "content": "47"
+      }
+    },
+    {
+      "scenario": "format-chart",
+      "model": "glm-5.3-flash",
+      "supplier": "ChinaLLM",
+      "judge": "Lulus bila blok ```chart berisi JSON yang terbaca dan punya larik series tidak kosong.",
+      "request": {
+        "model": "glm-5.3-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Buat grafik batang produksi PLTS: Januari 1240, Februari 1105, Maret 1318, April 1402, Mei 1377 MWh.\nJawab hanya dengan blok kode ```chart berisi JSON {\"type\":\"bar|line|pie\",\"labels\":[],\"series\":[{\"name\":\"\",\"data\":[]}]}."
+          }
+        ],
+        "max_tokens": 1024,
+        "stream": true
+      },
+      "response": {
+        "finish_reason": "stop",
+        "prompt_tokens": 89,
+        "completion_tokens": 229,
+        "reasoning_tokens": 170,
+        "latency_ms": 6698,
+        "ttft_any_ms": 3621,
+        "ttft_content_ms": 6084,
+        "content": "```chart\n{\"type\":\"bar\",\"labels\":[\"Januari\",\"Februari\",\"Maret\",\"April\",\"Mei\"],\"series\":[{\"name\":\"Produksi PLTS (MWh)\",\"data\":[1240,1105,1318,1402,1377]}]}\n```"
+      }
+    },
+    {
+      "scenario": "jawaban-panjang",
+      "model": "glm-5.3-flash",
+      "supplier": "ChinaLLM",
+      "judge": "Gagal bila finish_reason bernilai \"length\", yang berarti jawaban terpotong batas token.",
+      "request": {
+        "model": "glm-5.3-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Susun strategi peluncuran produk SaaS B2B dalam 30 hari, lengkap dengan rincian per minggu."
+          }
+        ],
+        "max_tokens": 16384,
+        "stream": true
+      },
+      "response": {
+        "finish_reason": "stop",
+        "prompt_tokens": 40,
+        "completion_tokens": 3587,
+        "reasoning_tokens": 2179,
+        "latency_ms": 70223,
+        "ttft_any_ms": 2936,
+        "ttft_content_ms": 47070,
+        "content": "# Strategi Peluncuran SaaS B2B dalam 30 Hari\n**Asumsi awal:** produk sudah (atau hampir) siap, tim kecil 2–8 orang, dan target pasar sudah teridentifikasi. Jika kondisinya berbeda, strategi bisa disesuaikan.\n---\n## Minggu 1 (Hari 1–7): Fondasi & Persiapan\n**Fokus: memastikan semua orang sependapat tentang \"untuk siapa, apa, dan mengapa\".**\n- Finalisasi ICP (Ideal Customer Profile) dan buyer persona — siapa pengguna vs. siapa pengambil keputusan\n- Kunci pos…"
+      }
+    },
+    {
+      "scenario": "konteks-panjang",
+      "model": "glm-5.3-flash",
+      "supplier": "ChinaLLM",
+      "judge": "Lulus bila jawaban memuat kode ZX-4719 yang ditanam di pesan pertama, membuktikan konteks tidak dipotong.",
+      "request": {
+        "model": "glm-5.3-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Catatan penting: kode registrasi proyek PLTS Cirata adalah ZX-4719. Simpan kode ini."
+          },
+          {
+            "role": "system",
+            "content": "… 225 pesan riwayat dipotong untuk ditampilkan …"
+          },
+          {
+            "role": "user",
+            "content": "Sebutkan kode registrasi proyek PLTS Cirata yang saya berikan di awal. Jawab hanya kodenya."
+          }
+        ],
+        "max_tokens": 512,
+        "stream": true,
+        "_catatan": "227 pesan, ±20.132 token"
+      },
+      "response": {
+        "finish_reason": "stop",
+        "prompt_tokens": 25336,
+        "completion_tokens": 84,
+        "reasoning_tokens": 77,
+        "latency_ms": 6149,
+        "ttft_any_ms": 4556,
+        "ttft_content_ms": 6148,
+        "content": "ZX-4719"
+      }
+    }
   ]
 }

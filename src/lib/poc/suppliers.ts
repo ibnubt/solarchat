@@ -18,6 +18,12 @@ export type SupplierReport = {
   supplierRatio: Record<string, number>;
   sessions: Array<{ id: string; startedAt: string; usageStartUsd: number | null; usageEndUsd: number | null }>;
   rates: Record<string, { usdPerKIn: number; usdPerKOut: number; samples: number }>;
+  /** Satu contoh nyata per skenario: badan permintaan dan jawaban apa adanya. */
+  examples?: Array<{
+    scenario: string; model: string; supplier: string; judge: string;
+    request: Record<string, unknown>;
+    response: { finish_reason: string; prompt_tokens: number; completion_tokens: number; reasoning_tokens: number; latency_ms: number; ttft_any_ms: number | null; ttft_content_ms: number | null; content: string };
+  }>;
   samples: Sample[];
 };
 
