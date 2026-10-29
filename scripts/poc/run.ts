@@ -19,6 +19,8 @@ type Sample = {
   inputTokens: number; outputTokens: number; reasoningTokens: number;
   finishReason: string; emptyContent: boolean;
   failureKind?: 'upstream' | 'transport'; transportRetries?: number;
+  /** Model menolak parameter uji (mis. reasoning_effort); bukan kegagalan supplier. */
+  unsupported?: boolean;
   correct?: boolean; chartValid?: boolean; factFound?: boolean; truncated?: boolean;
   /** Potongan jawaban untuk ditinjau ulang bila penilaian dipersoalkan. */
   answerPreview?: string;
@@ -54,59 +56,76 @@ async function loadKeys(): Promise<Record<Supplier, string>> {
 const pairs = () => MATRIX.filter((m) => !ONLY || m.model === ONLY)
   .flatMap((m) => m.suppliers.map((supplier) => ({ model: m.model, supplier, plan: m.suppliers.length > 1 ? PLAN : PLAN_SINGLE })));
 
-/** Harga terukur per model: dua profil token dipakai menyelesaikan tarif masukan dan keluaran. */
+/**
+ * Harga terukur per model. Dua profil token berbeda dipakai menyelesaikan tarif masukan dan keluaran.
+ * Setiap permintaan memakai teks unik agar tidak kena cache prompt, yang tarifnya jauh lebih murah
+ * dan sempat membuat tarif masukan tercatat terlalu rendah.
+ */
+const uniqueFiller = (approxTokens: number) => {
+  const words = ['gardu', 'trafo', 'jaringan', 'pelanggan', 'beban', 'tegangan', 'pemeliharaan', 'inspeksi', 'laporan', 'wilayah', 'cabang', 'operasi'];
+  const parts: string[] = [];
+  let count = 0;
+  while (count < approxTokens) {
+    const n = Math.floor(Math.random() * 1_000_000);
+    parts.push(`${words[n % words.length]} ${n} ${words[(n >> 3) % words.length]} ${(n * 7) % 9973}.`);
+    count += 8;
+  }
+  return parts.join(' ');
+};
+
 async function calibrate(keys: Record<Supplier, string>) {
-  const rates: Record<string, { usdPerKIn: number; usdPerKOut: number; samples: number }> = {};
+  // Tagihan akun bisa tercampur pemakaian lain selama pengukuran, jadi tiap model diukur
+  // beberapa putaran dan diambil mediannya; rentang antar putaran ikut disimpan.
+  const ROUNDS = 3;
+  const REPEAT = 3;
+  const rates: Record<string, { usdPerKIn: number; usdPerKOut: number; samples: number; spreadIn?: [number, number]; spreadOut?: [number, number] }> = {};
+  const median = (v: number[]) => { const s = [...v].sort((a, b) => a - b); return s[Math.floor(s.length / 2)]; };
+
   for (const entry of MATRIX) {
     if (ONLY && entry.model !== ONLY) continue;
     const supplier = entry.suppliers[0];
     const ratio = SUPPLIER_RATIO[supplier];
-    const filler = 'Sistem kelistrikan nasional memerlukan perencanaan jaringan yang cermat. '.repeat(420);
-    const profiles: Array<{ messages: Msg[]; max: number }> = [
-      { messages: [{ role: 'user', content: 'Tulis satu paragraf pendek tentang listrik.' }], max: 220 },
-      { messages: [{ role: 'user', content: `${filler}\n\nJawab satu kata: selesai.` }], max: 48 }
-    ];
-    const points: Array<{ in: number; out: number; usd: number }> = [];
-    for (const profile of profiles) {
-      await sleep(2500);
-      const before = await accountUsageUsd(keys[supplier]);
-      let inTok = 0, outTok = 0;
-      for (let i = 0; i < 2; i++) {
-        const r = await streamChat(keys[supplier], entry.model, profile.messages, profile.max);
-        inTok += r.inputTokens; outTok += r.outputTokens;
+    const ins: number[] = [], outs: number[] = [];
+
+    for (let round = 0; round < ROUNDS; round++) {
+      const profiles: Array<{ make: () => Msg[]; max: number }> = [
+        { make: () => [{ role: 'user', content: `Tulis satu paragraf pendek tentang listrik. Kode: ${Math.random().toString(36).slice(2)}` }], max: 220 },
+        { make: () => [{ role: 'user', content: `${uniqueFiller(6000)}\n\nJawab satu kata: selesai.` }], max: 48 }
+      ];
+      const points: Array<{ in: number; out: number; usd: number }> = [];
+      for (const profile of profiles) {
+        await sleep(2500);
+        const before = await accountUsageUsd(keys[supplier]);
+        let inTok = 0, outTok = 0;
+        for (let i = 0; i < REPEAT; i++) {
+          const r = await streamChat(keys[supplier], entry.model, profile.make(), profile.max);
+          inTok += r.inputTokens; outTok += r.outputTokens;
+        }
+        await sleep(4000);
+        const after = await accountUsageUsd(keys[supplier]);
+        if (before === null || after === null || after <= before || !inTok) continue;
+        points.push({ in: inTok / 1000, out: outTok / 1000, usd: (after - before) / ratio });
       }
-      await sleep(4000);
-      const after = await accountUsageUsd(keys[supplier]);
-      if (before === null || after === null || after <= before || !inTok) continue;
-      points.push({ in: inTok / 1000, out: outTok / 1000, usd: (after - before) / ratio });
-    }
-    if (points.length === 2) {
+      if (points.length !== 2) continue;
       const [a, b] = points;
       const det = a.in * b.out - b.in * a.out;
-      if (Math.abs(det) > 1e-9) {
-        const rin = (a.usd * b.out - b.usd * a.out) / det;
-        const rout = (a.in * b.usd - b.in * a.usd) / det;
-        if (rin >= 0 && rout >= 0) {
-          rates[entry.model] = { usdPerKIn: rin, usdPerKOut: rout, samples: points.length };
-          log(`kalibrasi ${entry.model}: $${rin.toFixed(6)}/1k masuk, $${rout.toFixed(6)}/1k keluar (sebelum pengali supplier)`);
-          continue;
-        }
-      }
+      if (Math.abs(det) < 1e-9) continue;
+      const rin = (a.usd * b.out - b.usd * a.out) / det;
+      const rout = (a.in * b.usd - b.in * a.usd) / det;
+      if (rin >= 0 && rout >= 0) { ins.push(rin); outs.push(rout); }
     }
-    log(`kalibrasi ${entry.model}: gagal, biaya pasangan ini dihitung dari total sesi`);
+
+    if (ins.length) {
+      rates[entry.model] = {
+        usdPerKIn: median(ins), usdPerKOut: median(outs), samples: ins.length * REPEAT * 2,
+        spreadIn: [Math.min(...ins), Math.max(...ins)], spreadOut: [Math.min(...outs), Math.max(...outs)]
+      };
+      log(`kalibrasi ${entry.model}: masuk $${median(ins).toFixed(6)} [${Math.min(...ins).toFixed(6)}-${Math.max(...ins).toFixed(6)}], keluar $${median(outs).toFixed(6)} [${Math.min(...outs).toFixed(6)}-${Math.max(...outs).toFixed(6)}] per 1k, ${ins.length} putaran`);
+    } else {
+      log(`kalibrasi ${entry.model}: gagal`);
+    }
   }
   return rates;
-}
-
-/** Ambil blok ```chart dan periksa apakah isinya spesifikasi grafik yang bisa dipakai. */
-function chartIsValid(text: string) {
-  const block = /```(?:chart|json)?\s*([\s\S]*?)```/.exec(text);
-  const raw = (block ? block[1] : text).trim();
-  try {
-    const spec = JSON.parse(raw);
-    const series = spec.series ?? spec.datasets ?? spec.data;
-    return Boolean(spec && typeof spec === 'object' && Array.isArray(series) && series.length > 0);
-  } catch { return false; }
 }
 
 async function runScenario(key: string, model: string, supplier: Supplier, scenario: string, index: number, messages: Msg[], max: number) {
@@ -156,6 +175,24 @@ async function restBlock(key: string, model: string, supplier: Supplier, plan: t
   if (wants('jawaban-panjang')) for (let i = 0; i < plan.longAnswer; i++) {
     const { sample } = await runScenario(key, model, supplier, 'jawaban-panjang', i, [{ role: 'user', content: LONG_ANSWER_PROMPTS[i % LONG_ANSWER_PROMPTS.length] }], LONG_ANSWER_MAX_TOKENS);
     out.push({ ...sample, truncated: sample.finishReason === 'length' });
+  }
+
+  // Prompt yang sama dengan uji latensi, tetapi meminta model tidak menalar. Status 400 berarti
+  // model tidak mendukung permintaan itu; dicatat apa adanya, bukan sebagai kegagalan supplier.
+  if (wants('tanpa-nalar')) for (let i = 0; i < plan.noReasoning; i++) {
+    const r = await streamChat(key, model, [{ role: 'user', content: LATENCY_PROMPT }], MAX_TOKENS.latency, 300_000, { reasoning_effort: 'low' });
+    const unsupported = !r.ok && r.status === 400;
+    out.push({
+      session: SESSION, model, supplier, scenario: 'tanpa-nalar', index: i,
+      ok: r.ok || unsupported, status: r.status, ...(r.error && !unsupported ? { error: r.error } : {}),
+      ...(unsupported ? { error: 'tidak didukung model (400)', unsupported: true } : {}),
+      ...(r.failureKind && !unsupported ? { failureKind: r.failureKind } : {}),
+      ttftAnyMs: r.ttftAnyMs === null ? null : Math.round(r.ttftAnyMs),
+      ttftMs: r.ttftMs === null ? null : Math.round(r.ttftMs),
+      latencyMs: Math.round(r.latencyMs),
+      inputTokens: r.inputTokens, outputTokens: r.outputTokens, reasoningTokens: r.reasoningTokens,
+      finishReason: r.finishReason, emptyContent: r.emptyContent
+    });
   }
 
   if (wants('konteks-panjang')) for (let i = 0; i < plan.longContext; i++) {

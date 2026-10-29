@@ -4,6 +4,7 @@ export type Sample = {
   session: string; model: string; supplier: string; scenario: string; index: number;
   ok: boolean; status: number; error?: string;
   failureKind?: 'upstream' | 'transport'; transportRetries?: number;
+  unsupported?: boolean;
   ttftAnyMs: number | null; ttftMs: number | null; latencyMs: number;
   inputTokens: number; outputTokens: number; reasoningTokens: number;
   finishReason: string; emptyContent: boolean;
@@ -17,7 +18,7 @@ export type SupplierReport = {
   threshold: { ttftAnyP95Ms: number; ttftContentP95Ms: number; tokensPerSecond: number; accuracy: number; chart: number };
   supplierRatio: Record<string, number>;
   sessions: Array<{ id: string; startedAt: string; usageStartUsd: number | null; usageEndUsd: number | null }>;
-  rates: Record<string, { usdPerKIn: number; usdPerKOut: number; samples: number }>;
+  rates: Record<string, { usdPerKIn: number; usdPerKOut: number; samples: number; spreadIn?: [number, number]; spreadOut?: [number, number] }>;
   /** Satu contoh nyata per skenario: badan permintaan dan jawaban apa adanya. */
   examples?: Array<{
     scenario: string; model: string; supplier: string; judge: string;

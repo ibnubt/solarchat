@@ -44,10 +44,10 @@ const isTransport = (message: string) => TRANSPORT.test(message);
 
 /** Satu permintaan streaming; mengukur TTFT dari mulai request sampai potongan isi pertama. */
 /** Coba ulang hanya untuk kegagalan jaringan sisi penguji; penolakan dari Tokenku dicatat apa adanya. */
-export async function streamChat(key: string, model: string, messages: Msg[], maxTokens: number, timeoutMs = 300_000): Promise<CallResult> {
+export async function streamChat(key: string, model: string, messages: Msg[], maxTokens: number, timeoutMs = 300_000, extra: Record<string, unknown> = {}): Promise<CallResult> {
   let last: CallResult | null = null;
   for (let attempt = 0; attempt <= 2; attempt++) {
-    const r = await withLimit(() => streamOnce(key, model, messages, maxTokens, timeoutMs));
+    const r = await withLimit(() => streamOnce(key, model, messages, maxTokens, timeoutMs, extra));
     if (r.ok || r.failureKind !== 'transport') return attempt ? { ...r, transportRetries: attempt } : r;
     last = r;
     await new Promise((res) => setTimeout(res, 1500 * (attempt + 1)));
@@ -55,7 +55,7 @@ export async function streamChat(key: string, model: string, messages: Msg[], ma
   return { ...(last as CallResult), transportRetries: 2 };
 }
 
-async function streamOnce(key: string, model: string, messages: Msg[], maxTokens: number, timeoutMs: number): Promise<CallResult> {
+async function streamOnce(key: string, model: string, messages: Msg[], maxTokens: number, timeoutMs: number, extra: Record<string, unknown> = {}): Promise<CallResult> {
   const started = performance.now();
   const abort = new AbortController();
   const timer = setTimeout(() => abort.abort(), timeoutMs);
@@ -63,7 +63,7 @@ async function streamOnce(key: string, model: string, messages: Msg[], maxTokens
     const res = await fetch(BASE, {
       method: 'POST',
       headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-      body: JSON.stringify({ model, messages, max_tokens: maxTokens, stream: true, stream_options: { include_usage: true } }),
+      body: JSON.stringify({ model, messages, max_tokens: maxTokens, stream: true, stream_options: { include_usage: true }, ...extra }),
       signal: abort.signal
     });
     if (!res.ok || !res.body) {

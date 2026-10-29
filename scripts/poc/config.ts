@@ -20,8 +20,8 @@ export const MATRIX: Array<{ model: string; suppliers: Supplier[] }> = [
  * 6-22 detik per permintaan, jadi batasnya waktu, bukan biaya. Model dengan banyak supplier
  * diberi sampel lebih besar karena di situlah perbandingannya terjadi.
  */
-export const PLAN = { latency: 50, load: 32, accuracy: 40, chart: 8, longAnswer: 3, longContext: 5 } as const;
-export const PLAN_SINGLE = { latency: 20, load: 16, accuracy: 40, chart: 5, longAnswer: 2, longContext: 3 } as const;
+export const PLAN = { latency: 50, load: 32, accuracy: 40, chart: 8, longAnswer: 3, longContext: 5, noReasoning: 20 } as const;
+export const PLAN_SINGLE = { latency: 20, load: 16, accuracy: 40, chart: 5, longAnswer: 2, longContext: 3, noReasoning: 20 } as const;
 
 /** Batas token; model penalar butuh ruang agar jawabannya tidak habis dipakai menalar. */
 export const MAX_TOKENS = { latency: 512, load: 512, accuracy: 1024, chart: 1024, longContext: 512 } as const;
