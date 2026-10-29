@@ -114,7 +114,7 @@ export function summarise(report: SupplierReport) {
       const nr = sr.filter((s) => s.scenario === 'tanpa-nalar');
       const nrOk = nr.filter((s) => s.ok && !s.unsupported);
       const nrOut = nrOk.reduce((a, s) => a + s.outputTokens, 0);
-      const av = sr.filter((s) => s.scenario === 'ketersediaan');
+      const av = sr.filter((s) => s.scenario === 'ketersediaan' && (s.ok || s.failureKind !== 'transport'));
       supplierRows.push({
         model, supplier, ratio: ratio[supplier] ?? 1,
         requests: srCounted.length,

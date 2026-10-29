@@ -254,9 +254,10 @@ async function main() {
     if (prev.schemaVersion === 2) {
       // Hanya skenario yang baru dijalankan yang digantikan; sisanya dipertahankan.
       const kept = prev.samples.filter((s: any) => !(s.session === SESSION && ranScenarios.has(s.scenario)));
-      const sessions = SCENARIOS.length
-        ? prev.sessions.map((s: any) => (s.id === SESSION ? s : s))
-        : [...prev.sessions.filter((s: any) => s.id !== SESSION), ...report.sessions];
+      // Sesi baru tetap dicatat walau hanya sebagian skenario yang dijalankan.
+      const sessions = prev.sessions.some((s: any) => s.id === SESSION)
+        ? prev.sessions
+        : [...prev.sessions, ...report.sessions];
       merged = { ...report, sessions: sessions.length ? sessions : report.sessions, rates: { ...prev.rates, ...rates }, samples: [...kept, ...samples] };
     }
   } catch { /* berkas belum ada */ }
