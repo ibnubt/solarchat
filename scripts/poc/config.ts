@@ -32,15 +32,15 @@ export const LONG_CONTEXT_TARGET_TOKENS = 20_000;
 
 /** Kriteria lulus, ditetapkan sebelum uji dijalankan. */
 export const CRITERIA = [
-  { id: 'reliability', label: 'Keandalan', detail: 'Tanpa kegagalan pada seluruh request pasangan ini' },
-  { id: 'ttftAny', label: 'Respons pertama', detail: 'p95 token pertama (termasuk penalaran) <= 3.000 ms' },
-  { id: 'ttftContent', label: 'Teks pertama', detail: 'p95 teks jawaban pertama <= 10.000 ms' },
-  { id: 'throughput', label: 'Kecepatan', detail: 'Median token/detik >= 30' },
-  { id: 'accuracy', label: 'Akurasi', detail: 'Jawaban benar >= 90% pada soal berjawaban pasti' },
-  { id: 'chart', label: 'Kepatuhan format', detail: 'JSON blok chart valid >= 90%' },
-  { id: 'longAnswer', label: 'Jawaban utuh', detail: 'Tidak ada jawaban terpotong oleh batas panjang' },
-  { id: 'longContext', label: 'Konteks panjang', detail: 'Fakta tertanam pada konteks ~20k token ditemukan 100%' },
-  { id: 'rateLimit', label: 'Tanpa 429', detail: 'Tidak ada penolakan rate limit pada beban bersamaan' }
+  { id: 'reliability', label: 'Tidak pernah gagal', detail: 'Semua permintaan dilayani, tidak ada yang ditolak atau putus' },
+  { id: 'ttftAny', label: 'Mulai merespons cepat', detail: 'Layar tidak diam lebih dari 3 detik sebelum ada tanda model bekerja' },
+  { id: 'ttftContent', label: 'Jawaban cepat terbaca', detail: 'Teks jawaban mulai muncul dalam 10 detik' },
+  { id: 'throughput', label: 'Menulis cepat', detail: 'Minimal 30 token per detik saat menulis jawaban' },
+  { id: 'accuracy', label: 'Jawaban benar', detail: 'Minimal 90% benar pada 40 soal yang kuncinya pasti' },
+  { id: 'chart', label: 'Format grafik benar', detail: 'Minimal 90% permintaan grafik menghasilkan data yang terbaca' },
+  { id: 'longAnswer', label: 'Jawaban tidak terpotong', detail: 'Uraian panjang selesai sampai habis, tidak putus di tengah' },
+  { id: 'longContext', label: 'Ingat riwayat panjang', detail: 'Menemukan kembali satu kode yang ditulis di awal riwayat 20 ribu token' },
+  { id: 'rateLimit', label: 'Kuat saat ramai', detail: 'Tidak ada penolakan saat 16 permintaan dikirim serentak' },
 ] as const;
 
 /**

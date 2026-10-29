@@ -3,48 +3,48 @@
   "criteria": [
     {
       "id": "reliability",
-      "label": "Keandalan",
-      "detail": "Tanpa kegagalan pada seluruh request pasangan ini"
+      "label": "Tidak pernah gagal",
+      "detail": "Semua permintaan dilayani, tidak ada yang ditolak atau putus"
     },
     {
       "id": "ttftAny",
-      "label": "Respons pertama",
-      "detail": "p95 token pertama (termasuk penalaran) <= 3.000 ms"
+      "label": "Mulai merespons cepat",
+      "detail": "Layar tidak diam lebih dari 3 detik sebelum ada tanda model bekerja"
     },
     {
       "id": "ttftContent",
-      "label": "Teks pertama",
-      "detail": "p95 teks jawaban pertama <= 10.000 ms"
+      "label": "Jawaban cepat terbaca",
+      "detail": "Teks jawaban mulai muncul dalam 10 detik"
     },
     {
       "id": "throughput",
-      "label": "Kecepatan",
-      "detail": "Median token/detik >= 30"
+      "label": "Menulis cepat",
+      "detail": "Minimal 30 token per detik saat menulis jawaban"
     },
     {
       "id": "accuracy",
-      "label": "Akurasi",
-      "detail": "Jawaban benar >= 90% pada soal berjawaban pasti"
+      "label": "Jawaban benar",
+      "detail": "Minimal 90% benar pada 40 soal yang kuncinya pasti"
     },
     {
       "id": "chart",
-      "label": "Kepatuhan format",
-      "detail": "JSON blok chart valid >= 90%"
+      "label": "Format grafik benar",
+      "detail": "Minimal 90% permintaan grafik menghasilkan data yang terbaca"
     },
     {
       "id": "longAnswer",
-      "label": "Jawaban utuh",
-      "detail": "Tidak ada jawaban terpotong oleh batas panjang"
+      "label": "Jawaban tidak terpotong",
+      "detail": "Uraian panjang selesai sampai habis, tidak putus di tengah"
     },
     {
       "id": "longContext",
-      "label": "Konteks panjang",
-      "detail": "Fakta tertanam pada konteks ~20k token ditemukan 100%"
+      "label": "Ingat riwayat panjang",
+      "detail": "Menemukan kembali satu kode yang ditulis di awal riwayat 20 ribu token"
     },
     {
       "id": "rateLimit",
-      "label": "Tanpa 429",
-      "detail": "Tidak ada penolakan rate limit pada beban bersamaan"
+      "label": "Kuat saat ramai",
+      "detail": "Tidak ada penolakan saat 16 permintaan dikirim serentak"
     }
   ],
   "threshold": {
@@ -71,7 +71,7 @@
   ],
   "rates": {
     "glm-5.3-flash": {
-      "usdPerKIn": 0.000015428886303802138,
+      "usdPerKIn": 1.5428886303802138e-05,
       "usdPerKOut": 0.0002528623033123147,
       "samples": 2
     },
@@ -81,7 +81,7 @@
       "samples": 2
     },
     "deepseek-v4-1-flash": {
-      "usdPerKIn": 0.00001640197194092195,
+      "usdPerKIn": 1.640197194092195e-05,
       "usdPerKOut": 0.0014578932494120258,
       "samples": 2
     },
@@ -96,7 +96,7 @@
       "samples": 2
     },
     "doubao-seed-2-0-mini-260428": {
-      "usdPerKIn": 0.000028227917854735575,
+      "usdPerKIn": 2.8227917854735575e-05,
       "usdPerKOut": 0.0002813000711453935,
       "samples": 2
     }

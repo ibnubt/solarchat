@@ -8,7 +8,7 @@
   import ChartBlock from '$lib/markdown/ChartBlock.svelte';
   import type { ChartSpec } from '$lib/markdown/chart';
   import { CHAT_PROFILE, USD_TO_IDR, type PairMetrics, type Sample, type SupplierReport } from '$lib/poc/suppliers';
-  import { METHOD_NOTES, PURPOSE, limitations, nextSteps } from '$lib/poc/narrative';
+  import { METHOD_NOTES, WHAT_TESTED, cardSummary, conclusion, limitations } from '$lib/poc/narrative';
   import '$lib/markdown/blocks.css';
 
   type Analysis = {
@@ -38,18 +38,14 @@
 
   const suppliers = $derived([...new Set(analysis?.pairs.map((p) => p.supplier) ?? [])].sort());
   const limits = $derived(analysis ? limitations(analysis as never) : []);
-  const next = $derived(analysis ? nextSteps(analysis as never) : []);
+  const summary = $derived(analysis ? conclusion(analysis as never) : null);
 
   const SECTIONS = [
-    { id: 'keputusan', label: 'Keputusan' },
-    { id: 'temuan', label: 'Temuan' },
-    { id: 'cara', label: 'Cara uji' },
-    { id: 'papan-nilai', label: 'Papan nilai' },
-    { id: 'angka', label: 'Angka' },
-    { id: 'rincian', label: 'Rincian' },
-    { id: 'batasan', label: 'Batasan' },
-    { id: 'lanjut', label: 'Langkah lanjut' },
-    { id: 'lampiran', label: 'Lampiran' }
+    { id: 'kesimpulan', label: 'Kesimpulan' },
+    { id: 'pilihan', label: 'Pilihan per model' },
+    { id: 'cara', label: 'Yang diuji' },
+    { id: 'hasil', label: 'Hasil lengkap' },
+    { id: 'lampiran', label: 'Data mentah' }
   ];
 
   /** Satu seri per supplier, satu kategori per model: perbandingan dibaca mendatar. */
@@ -117,90 +113,85 @@
         {#each SECTIONS as s}<a href={`#${s.id}`}>{s.label}</a>{/each}
       </nav>
 
-      <section class="decision" id="keputusan">
-        <p class="kicker">KEPUTUSAN</p>
-        <h1>Supplier mana yang dipakai, dan apa cadangannya.</h1>
-        <p class="lede">
-          {analysis.totals.requests.toLocaleString('id-ID')} permintaan nyata ke {analysis.pairs.length} pasangan model-supplier,
-          biaya uji ${analysis.totals.costUsd.toFixed(2)}. Urutan disusun dengan mendahulukan yang lolos seluruh kriteria,
-          lalu yang termurah.
+      <section class="decision" id="kesimpulan">
+        <p class="kicker">KESIMPULAN</p>
+        <h1>{summary?.headline}</h1>
+        <ol class="points">
+          {#each summary?.points ?? [] as point}
+            <li><strong>{point.label}</strong><span>{point.text}</span></li>
+          {/each}
+        </ol>
+        <p class="basis">
+          Dasar: {analysis.totals.requests.toLocaleString('id-ID')} permintaan sungguhan ke
+          {analysis.pairs.length} kombinasi model dan supplier, biaya uji ${analysis.totals.costUsd.toFixed(2)}.
         </p>
+      </section>
 
+      <section class="section-block" id="pilihan">
+        <div class="section-heading"><div><p>PILIHAN PER MODEL</p><h2>Supplier mana untuk model mana</h2></div><span>Dipilih yang termurah selama mutu dan keandalannya setara</span></div>
         <div class="decision-grid">
           {#each analysis.chains as item}
+            {@const card = cardSummary(item.primary, analysis.pairs.filter((p) => p.model === item.model))}
             <article>
               <header><h3>{short(item.model)}</h3>{#if item.savingPercent > 0}<span class="save">hemat {item.savingPercent}%</span>{/if}</header>
               <p class="choice"><strong>{item.primary.supplier}</strong></p>
-              {#if item.alternatives > 0}
-                <p class="fallback">cadangan: {item.chain.slice(1).join(' → ')}</p>
-              {:else}
-                <p class="fallback warn">tidak ada cadangan — hanya satu supplier</p>
-              {/if}
-              {#if item.primary.failedCriteria.length}
-                <p class="fallback warn">belum memenuhi: {item.primary.failedCriteria.map((id) => report.criteria.find((c) => c.id === id)?.label ?? id).join(', ')}</p>
-              {/if}
+              <p class="why">{card.reason}</p>
               <dl>
-                <div><dt>Keandalan</dt><dd>{pct(item.primary.reliability)}</dd></div>
-                <div><dt>Token pertama p95</dt><dd>{ms(item.primary.ttftAnyP95)}</dd></div>
+                <div><dt>Permintaan berhasil</dt><dd>{pct(item.primary.reliability)}</dd></div>
+                <div><dt>Mulai merespons</dt><dd>{ms(item.primary.ttftAnyP95)}</dd></div>
                 <div><dt>Biaya 1.000 chat</dt><dd>{rupiah(item.primary.costPer1000ChatsUsd)}</dd></div>
               </dl>
+              {#if card.comparison}<p class="compare">{card.comparison}</p>{/if}
+              <p class="fallback">
+                {#if item.alternatives > 0}Cadangan bila bermasalah: {item.chain.slice(1).join(', ')}{:else}<b>Tidak ada cadangan.</b> Model ini hanya ada di satu supplier.{/if}
+              </p>
+              {#if card.warnings.length}<p class="warn">Catatan: {card.warnings.join(', ')}.</p>{/if}
             </article>
           {/each}
         </div>
       </section>
 
-      <section class="section-block" id="temuan">
-        <div class="section-heading"><div><p>TEMUAN</p><h2>Yang perlu ditindaklanjuti</h2></div><span>Disusun dari angka, bukan ditulis tangan</span></div>
-        <ul class="findings">
-          {#each analysis.findings as f}
-            <li class={f.tone}><span>{f.tone}</span><p>{f.text}</p></li>
-          {/each}
-        </ul>
-      </section>
-
       <section class="section-block" id="cara">
-        <div class="section-heading"><div><p>CARA UJI</p><h2>Yang dikirim dan yang diterima</h2></div><span>{analysis.pairs.length} pasangan model-supplier</span></div>
-        <p class="purpose">{PURPOSE}</p>
-
-        {#each report.examples ?? [] as ex}
-          {@const count = analysis.scenarios.find((sc) => sc.name === ex.scenario)}
-          <article class="case">
-            <header>
-              <h3>{ex.scenario}</h3>
-              {#if count}<span>{count.perPair} per pasangan · {count.total.toLocaleString('id-ID')} total</span>{/if}
-            </header>
-            <div class="case-body">
-              <div>
-                <p class="cap">Dikirim</p>
-                <pre><code>{JSON.stringify(ex.request, null, 1)}</code></pre>
-              </div>
-              <div>
-                <p class="cap">Diterima · {ex.model} di {ex.supplier}</p>
-                <pre><code>{ex.response.content}</code></pre>
-                <p class="stats">
-                  finish_reason {ex.response.finish_reason} · masuk {ex.response.prompt_tokens.toLocaleString('id-ID')} token ·
-                  keluar {ex.response.completion_tokens.toLocaleString('id-ID')} ({ex.response.reasoning_tokens.toLocaleString('id-ID')} nalar) ·
-                  token pertama {ms(ex.response.ttft_any_ms)} · teks pertama {ms(ex.response.ttft_content_ms)} · total {ms(ex.response.latency_ms)}
-                </p>
-              </div>
-            </div>
-            <p class="judge"><span>Lulus bila</span>{ex.judge}</p>
-          </article>
-        {/each}
-
-        <div class="rb-scroll" style="margin-top:12px">
+        <div class="section-heading"><div><p>YANG DIUJI</p><h2>Enam hal, pada setiap kombinasi</h2></div></div>
+        <div class="rb-scroll">
           <table class="rb-table">
-            <thead><tr><th>Kriteria lulus</th><th>Ambang, ditetapkan sebelum uji</th></tr></thead>
-            <tbody>{#each report.criteria as c}<tr><td><strong>{c.label}</strong></td><td>{c.detail}</td></tr>{/each}</tbody>
+            <thead><tr><th>Yang diuji</th><th>Caranya</th><th class="num">Berapa kali</th></tr></thead>
+            <tbody>
+              {#each WHAT_TESTED as w}
+                {@const c = analysis.scenarios.find((sc) => sc.name === w.scenario)}
+                <tr><td><strong>{w.name}</strong></td><td>{w.detail}</td><td class="num">{c ? c.total.toLocaleString('id-ID') : '—'}</td></tr>
+              {/each}
+            </tbody>
           </table>
         </div>
         <ul class="plain notes">{#each METHOD_NOTES as n}<li>{n}</li>{/each}</ul>
+
+        {#if report.examples?.length}
+          <details class="shape">
+            <summary>Lihat contoh nyata yang dikirim dan diterima</summary>
+            <div class="cases">
+              {#each report.examples as ex}
+                <article class="case">
+                  <header><h3>{ex.scenario}</h3><span>{ex.model} di {ex.supplier}</span></header>
+                  <div class="case-body">
+                    <div><p class="cap">Dikirim</p><pre><code>{JSON.stringify(ex.request, null, 1)}</code></pre></div>
+                    <div>
+                      <p class="cap">Diterima</p><pre><code>{ex.response.content}</code></pre>
+                      <p class="stats">masuk {ex.response.prompt_tokens.toLocaleString('id-ID')} token · keluar {ex.response.completion_tokens.toLocaleString('id-ID')} ({ex.response.reasoning_tokens.toLocaleString('id-ID')} dipakai berpikir) · mulai merespons {ms(ex.response.ttft_any_ms)} · jawaban terbaca {ms(ex.response.ttft_content_ms)}</p>
+                    </div>
+                  </div>
+                  <p class="judge"><span>Dinilai</span>{ex.judge}</p>
+                </article>
+              {/each}
+            </div>
+          </details>
+        {/if}
       </section>
 
-      <section class="section-block" id="papan-nilai">
+      <section class="section-block" id="hasil">
         <div class="section-heading">
-          <div><p>PAPAN NILAI</p><h2>Lulus atau gagal terhadap kriteria</h2></div>
-          <span>Kriteria ditetapkan sebelum uji dijalankan</span>
+          <div><p>HASIL LENGKAP</p><h2>Setiap kombinasi terhadap sembilan syarat</h2></div>
+          <span>Arahkan kursor ke judul kolom untuk melihat syaratnya</span>
         </div>
         <div class="rb-scroll scorecard">
           <table class="rb-table">
@@ -279,14 +270,9 @@
         </div>
       </section>
 
-      <section class="section-block" id="batasan">
+      <section class="section-block">
         <div class="section-heading"><div><p>BATASAN</p><h2>Yang belum dijawab uji ini</h2></div></div>
         <ul class="plain limits">{#each limits as l}<li>{l}</li>{/each}</ul>
-      </section>
-
-      <section class="section-block" id="lanjut">
-        <div class="section-heading"><div><p>LANGKAH LANJUT</p><h2>Yang perlu dikerjakan setelah ini</h2></div></div>
-        <ol class="plain next">{#each next as n}<li>{n}</li>{/each}</ol>
       </section>
 
       <section class="section-block" id="lampiran">
@@ -341,7 +327,6 @@
   .report-content { width: min(1120px, calc(100% - 40px)); margin: 0 auto; padding: 34px 0 90px; display: flex; flex-direction: column; gap: 42px; }
   .kicker { margin: 0 0 10px; color: #858c82; font-family: 'DM Mono', monospace; font-size: 10px; letter-spacing: .12em; }
   .decision h1 { margin: 0; font-size: clamp(28px, 4vw, 44px); line-height: 1.1; letter-spacing: -.045em; font-weight: 600; }
-  .lede { max-width: 720px; margin: 14px 0 0; color: #5f665c; line-height: 1.65; font-size: 14px; }
 
   .decision-grid { margin-top: 26px; display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
   .decision-grid article { padding: 16px; border: 1px solid #dfe3da; border-radius: 14px; background: #fff; box-shadow: 0 8px 26px rgba(37,49,31,.045); }
@@ -350,7 +335,6 @@
   .save { flex: 0 0 auto; padding: 3px 7px; border-radius: 6px; background: #e6f0d3; color: #4b6d0a; font-family: 'DM Mono', monospace; font-size: 9px; }
   .choice { margin: 12px 0 2px; font-size: 20px; letter-spacing: -.02em; }
   .fallback { margin: 0; color: #7b8278; font-size: 11px; }
-  .fallback.warn { color: #a54139; }
   .decision-grid dl { margin: 14px 0 0; padding-top: 12px; border-top: 1px solid #edf0e8; display: grid; gap: 7px; }
   .decision-grid dl div { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
   .decision-grid dt { color: #868d82; font-size: 11px; }
@@ -369,18 +353,18 @@
   .mark .fail { background: #f7e0dd; color: #a54139; }
   .mark .skip { background: #eef0e8; color: #9aa196; }
 
-  .findings { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
-  .findings li { display: grid; grid-template-columns: 86px 1fr; gap: 12px; align-items: start; padding: 13px 15px; border: 1px solid #dfe3da; border-left-width: 3px; border-radius: 11px; background: #fff; }
-  .findings li.baik { border-left-color: #8fbd34; }
-  .findings li.perhatian { border-left-color: #eda100; }
-  .findings li.risiko { border-left-color: #d1655c; }
-  .findings span { padding: 3px 0; color: #868d82; font-family: 'DM Mono', monospace; font-size: 9px; text-transform: uppercase; letter-spacing: .08em; }
-  .findings li.risiko span { color: #a54139; }
-  .findings p { margin: 0; color: #3f473c; font-size: 13px; line-height: 1.6; }
 
   .chart-stack { display: grid; gap: 12px; }
   .note { margin: 12px 0 0; color: #7b8278; font-size: 11px; line-height: 1.6; }
 
+  .points { margin: 18px 0 0; padding: 0 0 0 20px; display: grid; gap: 11px; max-width: 820px; }
+  .points li { color: #4c5349; font-size: 13.5px; line-height: 1.65; }
+  .points strong { display: block; color: #20241f; font-size: 14px; }
+  .basis { margin: 20px 0 0; color: #868d82; font-size: 12px; }
+  .why { margin: 2px 0 0; color: #6c7468; font-size: 11.5px; line-height: 1.55; }
+  .compare { margin: 8px 0 0; color: #868d82; font-family: 'DM Mono', monospace; font-size: 10px; }
+  .warn { margin: 8px 0 0; padding-top: 8px; border-top: 1px solid #f1e3e0; color: #a54139; font-size: 11px; line-height: 1.5; }
+  .cases { padding: 0 12px 12px; display: grid; gap: 10px; }
   .toc { position: sticky; top: 62px; z-index: 9; display: flex; flex-wrap: wrap; gap: 4px; margin: -6px -8px 0; padding: 8px; border-bottom: 1px solid #e6e9e1; background: rgba(249,250,246,.94); backdrop-filter: blur(8px); }
   .toc a { padding: 5px 10px; border-radius: 999px; color: #72796f; font-size: 11px; text-decoration: none; }
   .toc a:hover { background: #e8ebe3; color: #20241f; }
@@ -398,7 +382,6 @@
   .judge { margin: 0; padding: 10px 14px; border-top: 1px solid #edf0e8; background: #fafbf8; color: #4c5349; font-size: 12px; line-height: 1.6; }
   .judge span { margin-right: 7px; color: #4b6d0a; font-family: 'DM Mono', monospace; font-size: 9px; text-transform: uppercase; letter-spacing: .08em; }
 
-  .purpose { max-width: 760px; margin: 0 0 14px; padding: 13px 15px; border-left: 3px solid #8fbd34; border-radius: 0 10px 10px 0; background: #f2f5ec; color: #2d3329; font-size: 13.5px; line-height: 1.65; }
 
   .plain { margin: 0; padding: 18px 18px 18px 36px; border: 1px solid #dfe3da; border-radius: 12px; background: #fff; color: #4c5349; font-size: 13px; line-height: 1.7; }
   .plain li + li { margin-top: 9px; }
@@ -431,6 +414,5 @@
     .decision-grid { grid-template-columns: 1fr; }
     .case-body { grid-template-columns: 1fr; }
     .case-body > div + div { border-left: 0; border-top: 1px solid #edf0e8; }
-    .findings li { grid-template-columns: 1fr; gap: 4px; }
-  }
+    }
 </style>
