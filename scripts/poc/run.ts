@@ -128,6 +128,17 @@ async function calibrate(keys: Record<Supplier, string>) {
   return rates;
 }
 
+/** Ambil blok ```chart dan periksa apakah isinya spesifikasi grafik yang bisa dipakai. */
+function chartIsValid(text: string) {
+  const block = /```(?:chart|json)?\s*([\s\S]*?)```/.exec(text);
+  const raw = (block ? block[1] : text).trim();
+  try {
+    const spec = JSON.parse(raw);
+    const series = spec.series ?? spec.datasets ?? spec.data;
+    return Boolean(spec && typeof spec === 'object' && Array.isArray(series) && series.length > 0);
+  } catch { return false; }
+}
+
 async function runScenario(key: string, model: string, supplier: Supplier, scenario: string, index: number, messages: Msg[], max: number) {
   const r = await streamChat(key, model, messages, max);
   const sample: Sample = {
