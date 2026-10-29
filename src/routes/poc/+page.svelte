@@ -29,7 +29,7 @@
   const scenarioLabel: Record<string, string> = {
     latensi: 'Chat pendek', beban: 'Beban serentak', akurasi: 'Soal berjawaban pasti',
     'format-chart': 'Permintaan grafik', 'jawaban-panjang': 'Jawaban panjang', 'konteks-panjang': 'Riwayat panjang',
-    'tanpa-nalar': 'Tanpa menalar', ketersediaan: 'Probe ketersediaan'
+    'tanpa-nalar': 'reasoning_effort: low', ketersediaan: 'Health check'
   };
 
   /** Kegagalan dari Tokenku, dikelompokkan per pasangan dan pesan. */
@@ -59,8 +59,8 @@
       }))
     };
   }
-  const ttftChart = $derived(bySupplier('Waktu tunggu p95 per supplier', (r) => (r.ttftP95 === null ? null : Math.round(r.ttftP95 / 100) / 10), 'detik', 'dtk'));
-  const costChart = $derived(bySupplier('Biaya 1.000 pertanyaan pendek per supplier', (r) => r.costShortIdr, 'rupiah', 'Rp'));
+  const ttftChart = $derived(bySupplier('TTFT p95 per supplier', (r) => (r.ttftP95 === null ? null : Math.round(r.ttftP95 / 100) / 10), 'detik', 'dtk'));
+  const costChart = $derived(bySupplier('Biaya 1.000 prompt pendek per supplier', (r) => r.costShortIdr, 'rupiah', 'Rp'));
 
   const samples = $derived(report?.samples ?? []);
   const filtered = $derived(samples.filter((s) =>
@@ -96,7 +96,7 @@
   {:else}
     <div class="report-content">
       <nav class="toc" aria-label="Daftar isi">
-        <a href="#performa">Performa per supplier</a><a href="#nalar">Berpikir</a><a href="#harga">Harga</a><a href="#grafik">Grafik</a><a href="#insiden">Insiden</a><a href="#batasan">Batasan</a><a href="#data">Data mentah</a>
+        <a href="#performa">Performa per supplier</a><a href="#harga">Harga</a><a href="#grafik">Grafik</a><a href="#insiden">Insiden</a><a href="#batasan">Batasan</a><a href="#data">Raw data</a>
       </nav>
 
       <section class="section-block" id="performa">
@@ -107,10 +107,10 @@
               <tr>
                 <th>Model</th><th>Supplier</th>
                 <th class="num">TTFT p50</th><th class="num">TTFT p95</th>
-                <th class="num">Token/detik</th>
-                <th class="num">Berpikir<small>porsi token keluar</small></th>
-                <th class="num">Berhasil</th>
-                <th class="num">Cek koneksi berkala<small>tiap 2 menit, 1 jam</small></th>
+                <th class="num">Tokens/s</th>
+                <th class="num">Reasoning<small>porsi output token</small></th>
+                <th class="num">Success rate</th>
+                <th class="num">Health check<small>tiap 2 menit, 1 jam</small></th>
               </tr>
             </thead>
             <tbody>
@@ -132,37 +132,15 @@
         <dl class="defs">{#each METRICS as m}<div><dt>{m.label}</dt><dd>{m.how}</dd></div>{/each}</dl>
       </section>
 
-      <section class="section-block" id="nalar">
-        <div class="section-heading"><div><p>BERPIKIR</p><h2>Apakah <code>reasoning_effort: low</code> mengurangi berpikir?</h2></div><span>Prompt pendek yang sama (43 token), dikirim tanpa dan dengan parameter itu. Semua supplier digabung.</span></div>
-        <div class="rb-scroll">
-          <table class="rb-table">
-            <thead><tr><th>Model</th><th class="num">Berpikir: normal → low</th><th class="num">Token keluar: normal → low</th><th class="num">TTFT p50: normal → low</th><th>Hasil</th></tr></thead>
-            <tbody>
-              {#each summary.models as m}
-                {@const le = m.lowEffort}
-                {@const cut = le && m.shortOutTokens && le.outTokens !== null ? 1 - le.outTokens / m.shortOutTokens : null}
-                <tr>
-                  <td><strong>{short(m.model)}</strong></td>
-                  <td class="num">{pct(m.reasoningShare)} → {le ? pct(le.reasoningShare) : '—'}</td>
-                  <td class="num">{m.shortOutTokens ?? '—'} → {le?.outTokens ?? '—'}</td>
-                  <td class="num">{sec(m.shortTtftP50)} → {le ? sec(le.ttftP50) : '—'}</td>
-                  <td>{#if !le}tidak diuji{:else if (m.reasoningShare ?? 0) < 0.1}model ini memang tidak berpikir{:else if cut !== null && cut >= 0.3}token keluar turun {Math.round(cut * 100)}%, parameter dihormati{:else}parameter diterima tetapi diabaikan{/if}</td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
       <section class="section-block" id="harga">
         <div class="section-heading"><div><p>HARGA</p><h2>Biaya per 1.000 permintaan</h2></div><span>Token terpakai disamakan per model, jadi selisih antar supplier = pengali harga Tokenku</span></div>
         <p class="sizes">
-          <b>Pertanyaan pendek</b>: median {pendek?.contextTokens.toLocaleString('id-ID')} token masuk, {pendek?.outputTokens.toLocaleString('id-ID')} token keluar (soal satu kalimat, jawaban satu angka atau kata).
-          <b>Jawaban panjang</b>: median {panjang?.contextTokens.toLocaleString('id-ID')} token masuk, {panjang?.outputTokens.toLocaleString('id-ID')} token keluar (uraian beberapa halaman). Token keluar sudah termasuk token berpikir.
+          <b>Prompt pendek</b>: median {pendek?.contextTokens.toLocaleString('id-ID')} input token, {pendek?.outputTokens.toLocaleString('id-ID')} output token (soal satu kalimat, jawaban satu angka atau kata).
+          <b>Jawaban panjang</b>: median {panjang?.contextTokens.toLocaleString('id-ID')} input token, {panjang?.outputTokens.toLocaleString('id-ID')} output token (uraian beberapa halaman). Output token sudah termasuk reasoning token.
         </p>
         <div class="rb-scroll">
           <table class="rb-table">
-            <thead><tr><th>Model</th><th>Supplier</th><th class="num">Pengali harga</th><th class="num">Pertanyaan pendek</th><th class="num">Jawaban panjang</th><th class="num">Selisih dari termurah</th></tr></thead>
+            <thead><tr><th>Model</th><th>Supplier</th><th class="num">Pengali harga</th><th class="num">Prompt pendek</th><th class="num">Jawaban panjang</th><th class="num">Selisih dari termurah</th></tr></thead>
             <tbody>
               {#each summary.suppliers as r, i}
                 {@const first = i === 0 || summary.suppliers[i - 1].model !== r.model}
@@ -187,7 +165,7 @@
       </section>
 
       <section class="section-block" id="insiden">
-        <div class="section-heading"><div><p>INSIDEN</p><h2>Kegagalan yang tercatat</h2></div></div>
+        <div class="section-heading"><div><p>INSIDEN</p><h2>Error yang tercatat</h2></div></div>
         <div class="rb-scroll">
           <table class="rb-table">
             <thead><tr><th>Sesi</th><th>Uji</th><th>Model</th><th>Supplier</th><th class="num">Gagal</th><th>Pesan</th></tr></thead>
@@ -209,7 +187,7 @@
       </section>
 
       <section class="section-block" id="data">
-        <div class="section-heading"><div><p>DATA MENTAH</p><h2>Semua permintaan</h2></div><span>{filtered.length.toLocaleString('id-ID')} dari {samples.length.toLocaleString('id-ID')}</span></div>
+        <div class="section-heading"><div><p>RAW DATA</p><h2>Semua request</h2></div><span>{filtered.length.toLocaleString('id-ID')} dari {samples.length.toLocaleString('id-ID')}</span></div>
         <div class="filters">
           <label>Uji<select bind:value={scenarioFilter}><option value="all">semua</option>{#each summary.scenarios as s}<option value={s.name}>{scenarioLabel[s.name] ?? s.name}</option>{/each}</select></label>
           <label>Model<select bind:value={modelFilter}><option value="all">semua</option>{#each summary.models as m}<option value={m.model}>{short(m.model)}</option>{/each}</select></label>
@@ -217,13 +195,13 @@
         </div>
         <div class="rb-scroll">
           <table class="rb-table">
-            <thead><tr><th>Sesi</th><th>Model</th><th>Supplier</th><th>Uji</th><th class="num">TTFT</th><th class="num">Lama</th><th class="num">Token keluar</th><th>Hasil</th><th>Catatan</th></tr></thead>
+            <thead><tr><th>Sesi</th><th>Model</th><th>Supplier</th><th>Uji</th><th class="num">TTFT</th><th class="num">Latency</th><th class="num">Output token</th><th>Hasil</th><th>Catatan</th></tr></thead>
             <tbody>
               {#each filtered.slice(0, shown) as s}
                 <tr>
                   <td>{s.session}</td><td>{short(s.model)}</td><td>{s.supplier}</td><td>{scenarioLabel[s.scenario] ?? s.scenario}</td>
                   <td class="num">{sec(s.ttftAnyMs)}</td><td class="num">{sec(s.latencyMs)}</td>
-                  <td class="num">{s.outputTokens}{#if s.reasoningTokens}<small>{s.reasoningTokens} berpikir</small>{/if}</td>
+                  <td class="num">{s.outputTokens}{#if s.reasoningTokens}<small>{s.reasoningTokens} reasoning</small>{/if}</td>
                   <td>{#if s.ok}<span class="tag ok">{s.unsupported ? 'tidak didukung' : 'berhasil'}</span>{:else}<span class="tag bad">{s.failureKind === 'transport' ? 'jaringan penguji' : 'gagal'}</span>{/if}</td>
                   <td class="note-cell">{s.error ?? s.answerPreview ?? ''}</td>
                 </tr>
